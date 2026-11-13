@@ -125,3 +125,5 @@ and commercial use, so the project is not open source. See the
 have separate licenses.
 The desktop package includes notices in `resources/third-party`; exports include
 the notices for the libraries and fonts they use. GSAP is not included.
+
+- AI was used during the project development phase.
