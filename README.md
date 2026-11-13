@@ -39,10 +39,27 @@ web experiences with Three.js, React and TypeScript.
 - Use a review-based assistant with supported local or cloud AI providers.
 
 See [FEATURES.md](FEATURES.md) for detailed behavior, limitations and setup.
+For step-by-step installation and usage in Turkish, see
+[HOW_TO_USE.md](HOW_TO_USE.md).
+
+## Desktop application
+
+Run the Windows x64 installer to use the editor in its own window without
+installing Node.js. The desktop app stores projects separately from the web
+development version and starts a local service on `127.0.0.1:4319`.
+On Windows, build the unsigned installer with `npm ci` and
+`npm run build:desktop`; it is copied to `Game Engine Editor Setup.exe` in the
+project root. The generated installer is excluded from Git.
+
+Linux and macOS packaging is configured with `npm run build:linux` (AppImage
+and DEB) and `npm run build:mac` (DMG and ZIP), respectively. Build on the
+target OS and architecture. These packages have not yet been built or tested
+on their respective platforms; macOS distribution also requires appropriate
+Apple signing and notarization.
 
 ## Getting started
 
-Requirements: Node.js and npm, plus a browser with WebGL support.
+Requirements: Node.js 22.12 or later and npm, plus a browser with WebGL support.
 
 ```bash
 npm ci
@@ -71,6 +88,8 @@ npm test
 ```
 
 `npm run test:integration` and `npm run test:e2e` run the suites separately.
+After building the Windows installer, `npm run test:desktop` tests the packaged
+desktop app using an isolated data directory.
 Browser tests use an isolated temporary project store. The optional VTOL
 showcase requires a locally supplied GLB and `VTOL_SHOWCASE=1`; see the test
 and [FEATURES.md](FEATURES.md). Some export tests require internet access.

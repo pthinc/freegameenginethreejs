@@ -8,7 +8,7 @@ const MAX_BODY_BYTES = 50 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
 
-export function createProjectServer(filePath = resolve('data', 'projects.jsonl')) {
+export function createProjectServer(filePath = resolve('data', 'projects.jsonl'), { staticHandler } = {}) {
   let queue = Promise.resolve();
 
   async function readProjects() {
@@ -222,7 +222,10 @@ export function createProjectServer(filePath = resolve('data', 'projects.jsonl')
       if (!res.headersSent) respond(res, error.status || 500, { error: error.status ? error.message : 'Project storage failed' });
       else res.end();
     };
-    if (new URL(req.url, 'http://localhost').pathname.startsWith('/api/ai/')) {
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+    if (staticHandler && !pathname.startsWith('/api/')) {
+      void staticHandler(req, res).catch(reportError);
+    } else if (pathname.startsWith('/api/ai/')) {
       void handle(req, res).catch(reportError);
     } else {
       const operation = queue.then(() => handle(req, res));

@@ -1,16 +1,24 @@
 {
   "name": "three-js-editor",
+  "description": "A desktop and browser editor for 3D games and web experiences.",
+  "homepage": "https://github.com/pthinc/freegameenginethreejs",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "desktop/main.mjs",
   "scripts": {
     "dev": "node server/start.mjs",
     "build": "vite build",
+    "build:desktop": "npm run build:windows",
+    "build:windows": "npm run build && electron-builder --win nsis && node desktop/copy-installer.mjs",
+    "build:linux": "npm run build && electron-builder --linux AppImage deb",
+    "build:mac": "npm run build && electron-builder --mac dmg zip",
     "lint": "eslint .",
     "preview": "node server/start.mjs preview",
     "test": "node --test server/projects.test.mjs && playwright test",
     "test:integration": "node --test server/projects.test.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:desktop": "node --test desktop/desktop.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.344.0",
@@ -51,11 +59,23 @@
     "eslint": "^9.9.1",
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",
     "eslint-plugin-react-refresh": "^0.4.11",
+    "electron": "^45.3.1",
+    "electron-builder": "^26.18.0",
     "globals": "^15.9.0",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.5.3",
     "typescript-eslint": "^8.3.0",
     "vite": "^5.4.2"
+  },
+  "build": {
+    "appId": "com.prometech.gameengineeditor",
+    "productName": "Game Engine Editor",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "desktop/**/*", "server/**/*", "license.md", "package.json", "!node_modules/**/*"],
+    "win": { "target": "nsis", "signAndEditExecutable": false },
+    "linux": { "target": ["AppImage", "deb"], "category": "Development", "maintainer": "Game Engine Editor <info@prometech.net.tr>" },
+    "mac": { "target": ["dmg", "zip"], "category": "public.app-category.developer-tools" },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true }
   }
 }

@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProjectServer } from './projects.mjs';
 import { generateCode, listModels } from './ai.mjs';
+import { createStaticHandler } from '../desktop/static.mjs';
 
 async function setup(t) {
   const dir = await mkdtemp(join(tmpdir(), 'game-editor-projects-'));
@@ -24,6 +25,31 @@ const json = (method, body) => ({
   method,
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(body),
+});
+
+test('desktop serves built files and project API without exposing files outside the build', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'game-editor-desktop-'));
+  const build = join(dir, 'dist');
+  await mkdir(build);
+  await writeFile(join(build, 'index.html'), '<h1>Editor</h1>');
+  await writeFile(join(dir, 'private.txt'), 'private');
+  const server = createProjectServer(join(dir, 'projects.jsonl'), { staticHandler: createStaticHandler(build) });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(dir, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const page = await fetch(base);
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-type'), /text\/html/);
+  assert.equal(await page.text(), '<h1>Editor</h1>');
+  assert.equal((await fetch(`${base}/..%5cprivate.txt`)).status, 404);
+  assert.equal((await fetch(`${base}/missing.js`)).status, 404);
+  assert.equal((await fetch(base, { method: 'POST' })).status, 405);
+  const created = await fetch(`${base}/api/projects`, json('POST', { name: 'Desktop', sceneData }));
+  assert.equal(created.status, 201);
+  assert.equal((await (await fetch(`${base}/api/projects`)).json())[0].name, 'Desktop');
 });
 
 test('creates, updates, lists and deletes projects in JSONL', async (t) => {
