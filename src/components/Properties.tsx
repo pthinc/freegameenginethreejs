@@ -157,6 +157,15 @@ export const Properties: React.FC = () => {
   }
 
   const { properties } = selectedObject;
+  const tween = properties.tween ?? {
+    enabled: false, property: 'position' as const, target: [...properties.position] as [number, number, number],
+    opacity: 1, duration: 1, easing: 'smooth' as const, repeat: false, yoyo: false
+  };
+  const updateTween = (patch: Partial<NonNullable<typeof properties.tween>>) =>
+    updateObjectProperties(selectedObject.id, { tween: { ...tween, ...patch } });
+  const floating = properties.float ?? { enabled: false, speed: 1, height: 0.1, rotation: 0.1 };
+  const updateFloat = (patch: Partial<NonNullable<typeof properties.float>>) =>
+    updateObjectProperties(selectedObject.id, { float: { ...floating, ...patch } });
 
   const handleTextureUpload = async (event: React.ChangeEvent<HTMLInputElement>, type: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap') => {
     const file = event.target.files?.[0];
@@ -281,6 +290,113 @@ export const Properties: React.FC = () => {
               <label className="block text-white text-sm">Tags (comma separated)
                 <input aria-label="Object tags" value={tagsDraft?.id === selectedObject.id ? tagsDraft.value : (properties.tags ?? []).join(', ')} onChange={(e) => { setTagsDraft({ id: selectedObject.id, value: e.target.value }); updateObjectProperties(selectedObject.id, { tags: e.target.value.split(',').map(tag => tag.trim()).filter(Boolean) }); }} className="w-full bg-gray-700 text-white p-2 rounded" />
               </label>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+        {(selectedObject.type === 'text3d' || selectedObject.type === 'textSdf') && properties.text3d && <AccordionItem value="text3d">
+          <AccordionTrigger className="text-white">{selectedObject.type === 'textSdf' ? 'SDF Text' : '3D Text'}</AccordionTrigger>
+          <AccordionContent>
+            <div className="space-y-2 text-sm text-white">
+              <label className="block">Text
+                <input aria-label="3D text" maxLength={200} value={properties.text3d.text}
+                  onChange={event => updateObjectProperties(selectedObject.id, { text3d: { ...properties.text3d!, text: event.target.value } })}
+                  className="block w-full rounded bg-gray-700 p-1" />
+              </label>
+              <label className="block">Size
+                <input aria-label="3D text size" type="number" min="0.01" max="100" step="0.1" value={properties.text3d.size}
+                  onChange={event => updateObjectProperties(selectedObject.id, { text3d: { ...properties.text3d!, size: Math.max(0.01, Math.min(100, Number(event.target.value))) } })}
+                  className="block w-full rounded bg-gray-700 p-1" />
+              </label>
+              {selectedObject.type === 'text3d' && <label className="block">Depth
+                <input aria-label="3D text depth" type="number" min="0" max="50" step="0.05" value={properties.text3d.depth}
+                  onChange={event => updateObjectProperties(selectedObject.id, { text3d: { ...properties.text3d!, depth: Math.max(0, Math.min(50, Number(event.target.value))) } })}
+                  className="block w-full rounded bg-gray-700 p-1" />
+              </label>}
+              <p className="text-xs text-gray-300">{selectedObject.type === 'textSdf'
+                ? 'SDF text uses bundled Noto Sans fonts and supports Latin-1 and Turkish characters.'
+                : 'Built-in Droid Sans font. Depth 0 creates flat geometry; this is not SDF text.'}</p>
+            </div>
+          </AccordionContent>
+        </AccordionItem>}
+        <AccordionItem value="float">
+          <AccordionTrigger className="text-white">Float</AccordionTrigger>
+          <AccordionContent>
+            <div className="space-y-2 text-sm text-white">
+              <label className="flex items-center gap-2">
+                <input aria-label="Enable float" type="checkbox" checked={floating.enabled} onChange={event => {
+                  if (event.target.checked && (properties.physics?.enabled || properties.characterController?.enabled || properties.pathFollower?.enabled)) {
+                    toast.error('Disable physics, character control and AI navigation before enabling float');
+                    return;
+                  }
+                  updateFloat({ enabled: event.target.checked });
+                }} />Play on start
+              </label>
+              {(['speed', 'height', 'rotation'] as const).map(key =>
+                <label key={key} className="block">Float {key}
+                  <input aria-label={`Float ${key}`} type="number" min="0" step="0.1" value={floating[key]}
+                    onChange={event => updateFloat({ [key]: Math.max(0, Number(event.target.value)) })}
+                    className="block w-full rounded bg-gray-700 p-1" />
+                </label>)}
+              <p className="text-xs text-gray-300">Visual offset applied after the timeline; physics and navigation must be disabled.</p>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+        <AccordionItem value="tween">
+          <AccordionTrigger className="text-white">Tween Animation</AccordionTrigger>
+          <AccordionContent>
+            <div className="space-y-2 text-sm text-white">
+              <label className="flex items-center gap-2">
+                <input aria-label="Enable tween animation" type="checkbox" checked={tween.enabled}
+                  onChange={event => updateTween({ enabled: event.target.checked })} />Play on start
+              </label>
+              <label className="block">Property
+                <select aria-label="Tween property" value={tween.property}
+                  onChange={event => {
+                    const property = event.target.value as typeof tween.property;
+                    const target = property === 'position' || property === 'rotation' || property === 'scale'
+                      ? [...properties[property]] as [number, number, number] : tween.target;
+                    updateTween({ property, target });
+                  }} className="block w-full rounded bg-gray-700 p-1">
+                  <option value="position">Position</option><option value="rotation">Rotation (degrees)</option>
+                  <option value="scale">Scale</option><option value="opacity">Opacity</option>
+                </select>
+              </label>
+              {tween.property === 'opacity'
+                ? <label className="block">Target opacity
+                  <input aria-label="Tween opacity" type="number" min="0" max="1" step="0.05" value={tween.opacity}
+                    onChange={event => updateTween({ opacity: Math.max(0, Math.min(1, Number(event.target.value))) })}
+                    className="block w-full rounded bg-gray-700 p-1" />
+                </label>
+                : <div>Target {tween.property}
+                  <div className="grid grid-cols-3 gap-2">{(['X', 'Y', 'Z'] as const).map((axis, index) =>
+                    <input key={axis} aria-label={`Tween target ${axis}`} type="number" step="0.1" value={tween.target[index]}
+                      onChange={event => {
+                        const target: [number, number, number] = [...tween.target];
+                        target[index] = Number(event.target.value);
+                        updateTween({ target });
+                      }} className="rounded bg-gray-700 p-1" />)}</div>
+                </div>}
+              <label className="block">Duration (seconds)
+                <input aria-label="Tween duration" type="number" min="0.01" step="0.1" value={tween.duration}
+                  onChange={event => updateTween({ duration: Math.max(0.01, Number(event.target.value)) })}
+                  className="block w-full rounded bg-gray-700 p-1" />
+              </label>
+              <label className="block">Easing
+                <select aria-label="Tween easing" value={tween.easing}
+                  onChange={event => updateTween({ easing: event.target.value as typeof tween.easing })}
+                  className="block w-full rounded bg-gray-700 p-1">
+                  <option value="linear">Linear</option><option value="smooth">Smooth</option><option value="out">Ease out</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2">
+                <input aria-label="Tween repeat" type="checkbox" checked={tween.repeat}
+                  onChange={event => updateTween({ repeat: event.target.checked })} />Repeat
+              </label>
+              <label className="flex items-center gap-2">
+                <input aria-label="Tween yoyo" type="checkbox" checked={tween.yoyo} disabled={!tween.repeat}
+                  onChange={event => updateTween({ yoyo: event.target.checked })} />Reverse on repeat
+              </label>
+              <p className="text-xs text-gray-300">Timeline channels override the same properties. Opacity requires a mesh or sprite.</p>
             </div>
           </AccordionContent>
         </AccordionItem>

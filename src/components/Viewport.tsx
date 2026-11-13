@@ -13,6 +13,11 @@ import { createObjectScripts } from '../systems/ObjectScripts';
 import { createWebLayer } from '../systems/WebLayer';
 import { createModelAnimations } from '../systems/ModelAnimations';
 import { createPropertyAnimations } from '../systems/PropertyAnimations';
+import { createTweenAnimations } from '../systems/TweenAnimations';
+import { createFloatEffects } from '../systems/FloatEffects';
+import { createEnvironmentTexture } from '../systems/Environment';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import * as Tween from '@tweenjs/tween.js';
 import { createTimeline } from '../systems/Timeline';
 import { createTimelineMedia } from '../systems/TimelineMedia';
 import { createSceneAI } from '../systems/SceneAI';
@@ -61,6 +66,8 @@ const Scene: React.FC<SceneProps> = ({ onContextMenu, webHost, webMode, webWidth
   const collisionRef = useRef<ReturnType<typeof createCollisionSystem> | null>(null);
   const modelAnimationsRef = useRef<ReturnType<typeof createModelAnimations> | null>(null);
   const propertyAnimationsRef = useRef<ReturnType<typeof createPropertyAnimations> | null>(null);
+  const tweenAnimationsRef = useRef<ReturnType<typeof createTweenAnimations> | null>(null);
+  const floatEffectsRef = useRef<ReturnType<typeof createFloatEffects> | null>(null);
   const timelineRef = useRef<ReturnType<typeof createTimeline> | null>(null);
   const suppressClickRef = useRef(false);
   const [transformMode] = useState<'translate' | 'rotate' | 'scale'>('translate');
@@ -159,6 +166,14 @@ const Scene: React.FC<SceneProps> = ({ onContextMenu, webHost, webMode, webWidth
       toast.error(`Animation error: ${message}`);
     }, webHost.current?.parentElement ?? undefined, openScene);
     scripts.start();
+    tweenAnimationsRef.current = createTweenAnimations(state.sceneObjects, Tween, message => {
+      console.error('Tween animation error:', message);
+      toast.error(`Animation error: ${message}`);
+    });
+    floatEffectsRef.current = createFloatEffects(state.sceneObjects, message => {
+      console.error('Float error:', message);
+      toast.error(`Float error: ${message}`);
+    });
     const navigationNotices = new Map<string, string>();
     pathFollowersRef.current = createPathFollowers(state.sceneObjects, state.sceneOptions.ai, state.sceneOptions.timeline,
       createSceneAI, message => {
@@ -182,7 +197,7 @@ const Scene: React.FC<SceneProps> = ({ onContextMenu, webHost, webMode, webWidth
         toast.error(`Timeline error: ${message}`);
       }, THREE, createTimelineMedia);
     }
-    return () => { active = false; timelineRef.current?.stop(); timelineRef.current = null; cleanupWeb?.(); scripts.stop(); modelAnimations.stop(); propertyAnimationsRef.current?.stop(); modelAnimationsRef.current = null; propertyAnimationsRef.current = null; triggerRef.current = null; collisionRef.current = null; pathFollowersRef.current = null; scriptsRef.current = null; playerCameraRef.current?.stop(); playerCameraRef.current = null; jquery?.noConflict?.(true); jqueryScript?.remove(); restoreCamera?.(); };
+    return () => { active = false; timelineRef.current?.stop(); timelineRef.current = null; cleanupWeb?.(); scripts.stop(); modelAnimations.stop(); propertyAnimationsRef.current?.stop(); tweenAnimationsRef.current?.stop(); modelAnimationsRef.current = null; propertyAnimationsRef.current = null; tweenAnimationsRef.current = null; floatEffectsRef.current = null; triggerRef.current = null; collisionRef.current = null; pathFollowersRef.current = null; scriptsRef.current = null; playerCameraRef.current?.stop(); playerCameraRef.current = null; jquery?.noConflict?.(true); jqueryScript?.remove(); restoreCamera?.(); };
   }, [isPlaying, scene, camera, gl, webHost]);
 
   useEffect(() => {
@@ -252,7 +267,30 @@ const Scene: React.FC<SceneProps> = ({ onContextMenu, webHost, webMode, webWidth
     } else {
       scene.fog = null;
     }
-  }, [scene, sceneOptions]);
+  }, [scene, sceneOptions.backgroundColor, sceneOptions.fogEnabled, sceneOptions.fogColor, sceneOptions.fogDensity]);
+
+  useEffect(() => {
+    const config = sceneOptions.environment;
+    if (!config?.enabled) return;
+    let active = true;
+    let texture: THREE.Texture | undefined;
+    void createEnvironmentTexture(config, THREE, url => new RGBELoader().loadAsync(url)).then(result => {
+      if (!active) { result.dispose(); return; }
+      texture = result;
+      scene.environment = result;
+      if (config.background) scene.background = result;
+    }).catch(error => {
+      if (!active) return;
+      console.error('Environment load failed:', error);
+      toast.error(error instanceof Error ? error.message : 'Environment load failed');
+    });
+    return () => {
+      active = false;
+      if (scene.environment === texture) scene.environment = null;
+      if (texture && scene.background === texture) scene.background = new THREE.Color(sceneOptions.backgroundColor);
+      texture?.dispose();
+    };
+  }, [scene, sceneOptions.environment, sceneOptions.backgroundColor]);
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -275,6 +313,7 @@ const Scene: React.FC<SceneProps> = ({ onContextMenu, webHost, webMode, webWidth
     }
 
     if (useEditorStore.getState().isPlaying) {
+      floatEffectsRef.current?.before();
       scriptsRef.current?.update(delta);
       modelAnimationsRef.current?.update(delta);
       pathFollowersRef.current?.update(delta);
@@ -289,7 +328,9 @@ const Scene: React.FC<SceneProps> = ({ onContextMenu, webHost, webMode, webWidth
       }
 
       propertyAnimationsRef.current?.update(delta);
+      tweenAnimationsRef.current?.update(delta);
       timelineRef.current?.update(delta);
+      floatEffectsRef.current?.update(delta);
       playerCameraRef.current?.update();
     }
   });

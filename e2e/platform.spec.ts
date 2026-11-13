@@ -74,7 +74,7 @@ test('space jumps without activating the focused play button', async ({ page }) 
 test('platform sides and undersides stop the player without grounding it', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {
-    const threePath = '/node_modules/.vite/deps/three.js';
+    const threePath = '/node_modules/three/build/three.module.js';
     const physicsPath = '/src/systems/PhysicsEngine.ts';
     const THREE = await import(/* @vite-ignore */ threePath);
     const { advancePhysics } = await import(/* @vite-ignore */ physicsPath);

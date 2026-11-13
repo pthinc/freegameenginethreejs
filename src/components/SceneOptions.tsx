@@ -1,9 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useEditorStore } from '../store/editorStore';
+import { useEditorStore, type SceneOptions as SceneOptionsType } from '../store/editorStore';
 import { Settings, Sun, Cloud } from 'lucide-react';
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from './ui/Accordion';
 import { HexColorPicker } from 'react-colorful';
 import { SceneAIEditor } from './SceneAIEditor';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { readFileDataUrl } from '../services/media';
+import { toast } from 'react-hot-toast';
 
 export const SceneOptions: React.FC = () => {
   const { sceneOptions, sceneObjects, updateSceneOptions, activeSceneId } = useEditorStore();
@@ -11,6 +14,32 @@ export const SceneOptions: React.FC = () => {
   const [showFogColorPicker, setShowFogColorPicker] = useState(false);
   const bgColorRef = useRef<HTMLDivElement>(null);
   const fogColorRef = useRef<HTMLDivElement>(null);
+  const environment: NonNullable<SceneOptionsType['environment']> =
+    sceneOptions.environment ?? { enabled: false, source: 'studio', background: false };
+
+  async function uploadEnvironment(event: React.ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      if (!file.name.toLowerCase().endsWith('.hdr')) throw new Error('Choose a Radiance .hdr file');
+      const data = await readFileDataUrl(file);
+      const texture = await new RGBELoader().loadAsync(data);
+      texture.dispose();
+      const state = useEditorStore.getState();
+      if (state.activeSceneId !== activeSceneId) throw new Error('The active scene changed while loading the HDR file');
+      state.updateSceneOptions({ environment: {
+        ...state.sceneOptions.environment, enabled: true, source: 'hdr',
+        background: state.sceneOptions.environment?.background ?? false, data, name: file.name
+      } });
+      toast.success('HDR environment loaded');
+    } catch (error) {
+      console.error('HDR environment upload failed:', error);
+      toast.error(error instanceof Error ? error.message : 'HDR environment upload failed');
+    } finally {
+      input.value = '';
+    }
+  }
 
   useEffect(() => {
     if (!showBackgroundColorPicker && !showFogColorPicker) return;
@@ -129,6 +158,30 @@ export const SceneOptions: React.FC = () => {
                 />
                 <label className="text-white text-sm">Enable Shadows</label>
               </div>
+              <label className="flex items-center gap-2 text-sm text-white">
+                <input aria-label="Enable environment" type="checkbox" checked={environment.enabled}
+                  onChange={event => updateSceneOptions({ environment: { ...environment, enabled: event.target.checked } })} />
+                Environment lighting
+              </label>
+              <label className="block text-sm text-white">Environment preset
+                <select aria-label="Environment preset" value={environment.source}
+                  onChange={event => updateSceneOptions({ environment: { ...environment,
+                    source: event.target.value as typeof environment.source } })}
+                  className="block w-full rounded bg-gray-700 p-1">
+                  <option value="studio">Studio</option><option value="sunset">Sunset</option><option value="night">Night</option>
+                  <option value="hdr" disabled={!environment.data}>Uploaded HDR</option>
+                </select>
+              </label>
+              <label className="block text-sm text-white">Upload HDR environment
+                <input aria-label="Upload HDR environment" type="file" accept=".hdr" onChange={event => { void uploadEnvironment(event); }}
+                  className="block w-full text-xs" />
+              </label>
+              {environment.name && <p className="text-xs text-gray-300">{environment.name}</p>}
+              <label className="flex items-center gap-2 text-sm text-white">
+                <input aria-label="Environment background" type="checkbox" checked={environment.background}
+                  onChange={event => updateSceneOptions({ environment: { ...environment, background: event.target.checked } })} />
+                Use as background
+              </label>
             </div>
           </AccordionContent>
         </AccordionItem>

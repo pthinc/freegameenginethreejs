@@ -1,9 +1,8 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import JSZip from 'jszip';
-import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { addObject } from './helpers';
+import { addObject, serveExport } from './helpers';
 
 test.skip(process.env.VTOL_SHOWCASE !== '1', 'Run explicitly with VTOL_SHOWCASE=1 and the local VTOL asset.');
 test.setTimeout(600000);
@@ -145,11 +144,7 @@ test('VTOL showcase is authored in the editor and works after export', async ({ 
   const zipPath = (await (await download).path())!;
   const zip = await JSZip.loadAsync(await readFile(zipPath));
   const directory = testInfo.outputPath('site');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await expect(page.getByRole('heading', { name: sections[0].title })).toBeVisible({ timeout: 30000 });
   const exportedState = () => page.evaluate(() => Function('return { z: camera.position.z, y: sceneObjects.find(item => item.type === "model").object.rotation.y }')() as { z: number; y: number });
   const before = await exportedState();

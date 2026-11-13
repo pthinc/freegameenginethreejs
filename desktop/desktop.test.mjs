@@ -31,6 +31,7 @@ test('packaged desktop saves, restores and exports a project', { timeout: 180000
   await page.getByRole('button', { name: 'New project', exact: true }).click();
   await expect(page.getByText('New project created')).toBeVisible();
   await page.getByText('Box', { exact: true }).first().locator('..').getByRole('button', { name: 'Add' }).click();
+  await page.getByText('SDF Text', { exact: true }).first().locator('..').getByRole('button', { name: 'Add' }).click();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Project saved', { exact: true })).toBeVisible({ timeout: 30000 });
   await application.close();
@@ -43,6 +44,7 @@ test('packaged desktop saves, restores and exports a project', { timeout: 180000
   await page.getByRole('button', { name: 'Desktop test', exact: true }).click();
   await expect(page.getByText('Project opened')).toBeVisible();
   await expect(page.locator('.absolute.bottom-0.z-30').getByText('Box', { exact: true })).toBeVisible();
+  await expect(page.locator('.absolute.bottom-0.z-30').getByText('SDF Text', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Play', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
@@ -60,4 +62,10 @@ test('packaged desktop saves, restores and exports a project', { timeout: 180000
   const zip = await JSZip.loadAsync(await readFile(path));
   assert.ok(zip.file('index.html'));
   assert.ok(zip.file('scene.js'));
+  assert.ok(zip.file('vendor/SDF-TEXT-LICENSE.txt'));
+  for (const name of ['three-LICENSE.txt', 'tween-LICENSE.txt', 'droid-NOTICE.txt', 'noto-sans-LICENSE.txt',
+    'troika-three-text-LICENSE.txt', 'troika-three-utils-LICENSE.txt', 'troika-worker-utils-LICENSE.txt',
+    'webgl-sdf-generator-LICENSE.txt', 'bidi-js-LICENSE.txt']) {
+    assert.ok((await readFile(resolve('release', 'win-unpacked', 'resources', 'third-party', name), 'utf8')).length > 100);
+  }
 });

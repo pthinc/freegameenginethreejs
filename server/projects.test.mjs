@@ -164,6 +164,13 @@ test('AI providers format requests and return generated code without real networ
   await generateCode({ provider: 'ollama', model: name, prompt: 'test' }, fetcher, {});
   assert.equal('think' in actualRequest, false);
   assert.equal('options' in actualRequest, false);
+  assert.match(actualRequest.messages[0].content, /Three\.js scene object/);
+  await generateCode({ provider: 'ollama', model: name, prompt: 'test', targetKind: 'web' }, fetcher, {});
+  assert.match(actualRequest.messages[0].content, /web component/);
+  assert.match(actualRequest.messages[0].content, /element, scene, camera/);
+  assert.match(actualRequest.messages[0].content, /keydown\(event\)/);
+  await assert.rejects(() => generateCode({ provider: 'ollama', model: name, prompt: 'test', targetKind: 'invalid' }, fetcher, {}), /target kind/);
+  await assert.rejects(() => generateCode({ provider: 'ollama', model: name, prompt: 'test', mode: 'scene-agent', context: {}, targetKind: 'web' }, fetcher, {}), /target kind/);
   await assert.rejects(() => generateCode({ provider: 'ollama', model: name, prompt: 'test', temperature: 2.1 }, fetcher, {}), /Temperature/);
   await assert.rejects(
     () => generateCode({ provider: 'ollama', model: name, prompt: 'test' }, async () => { throw Object.assign(new Error('timeout'), { name: 'TimeoutError' }); }, {}),
@@ -275,6 +282,8 @@ test('scene agent sends context and image in each provider format without real n
     assert.equal(JSON.parse(result).summary, 'ok');
     assert.match(JSON.stringify(body), /item-1/);
     assert.match(JSON.stringify(body), /image.png/);
+    assert.match(JSON.stringify(body), /gameengine_type/);
+    assert.match(JSON.stringify(body), /addscenebutton/);
     if (provider === 'ollama') assert.deepEqual(body.messages[1].images, ['YWJj']);
     if (provider === 'openai') assert.equal(body.messages[1].content[1].image_url.url, 'data:image/jpeg;base64,YWJj');
     if (provider === 'claude') assert.equal(body.messages[0].content[1].source.data, 'YWJj');

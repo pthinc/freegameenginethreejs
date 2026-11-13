@@ -8,9 +8,35 @@ import { createObjectScripts } from '../systems/ObjectScripts';
 import { createWebLayer } from '../systems/WebLayer';
 import { createModelAnimations } from '../systems/ModelAnimations';
 import { createPropertyAnimations } from '../systems/PropertyAnimations';
+import { createTweenAnimations } from '../systems/TweenAnimations';
+import { createFloatEffects } from '../systems/FloatEffects';
+import { createEnvironmentTexture } from '../systems/Environment';
 import { createTimeline } from '../systems/Timeline';
 import { createTimelineMedia } from '../systems/TimelineMedia';
 import jquerySource from 'jquery/dist/jquery.min.js?raw';
+import threeSource from 'three-export/build/three.min.js?raw';
+import gltfLoaderSource from 'three-export/examples/js/loaders/GLTFLoader.js?raw';
+import rgbeLoaderSource from 'three-export/examples/js/loaders/RGBELoader.js?raw';
+import threeLicense from 'three-export/LICENSE?raw';
+import tweenSource from '../../node_modules/@tweenjs/tween.js/dist/tween.umd.js?raw';
+import tweenLicense from '../../node_modules/@tweenjs/tween.js/LICENSE?raw';
+import textFontSource from 'three/examples/fonts/droid/droid_sans_regular.typeface.json?raw';
+import textFontNotice from 'three/examples/fonts/droid/NOTICE?raw';
+import latinFontUrl from '@fontsource/noto-sans/files/noto-sans-latin-400-normal.woff?url';
+import extendedFontUrl from '@fontsource/noto-sans/files/noto-sans-latin-ext-400-normal.woff?url';
+import notoLicense from '@fontsource/noto-sans/LICENSE?raw';
+import sdfUtils from '../../node_modules/troika-three-utils/dist/troika-three-utils.umd.min.js?raw';
+import sdfWorkers from '../../node_modules/troika-worker-utils/dist/troika-worker-utils.umd.min.js?raw';
+import sdfGenerator from '../../node_modules/webgl-sdf-generator/dist/webgl-sdf-generator.min.js?raw';
+import sdfBidi from '../../node_modules/bidi-js/dist/bidi.min.js?raw';
+import sdfText from '../../node_modules/troika-three-text/dist/troika-three-text.umd.min.js?raw';
+import sdfUtilsLicense from '../../node_modules/troika-three-utils/LICENSE?raw';
+import sdfWorkersLicense from '../../node_modules/troika-worker-utils/LICENSE?raw';
+import sdfGeneratorLicense from '../../node_modules/webgl-sdf-generator/LICENSE.txt?raw';
+import sdfBidiLicense from '../../node_modules/bidi-js/LICENSE.txt?raw';
+import sdfTextLicense from '../../node_modules/troika-three-text/LICENSE?raw';
+import { packageExportAssets } from './exportAssets';
+import { isSupportedSdfText } from './sceneObjects';
 
 export type ExportFormat = 'html' | 'react' | 'wordpress';
 
@@ -21,7 +47,7 @@ export const exportScene = async (snapshot: StoredScene, format: ExportFormat = 
   const projectData = {
     version: "1.0",
     lastModified: new Date().toISOString(),
-    ...snapshot
+    ...await packageExportAssets(snapshot, sceneZip)
   };
   const scenes = [
     { id: projectData.activeSceneId!, objects: projectData.objects, sceneOptions: projectData.sceneOptions },
@@ -37,6 +63,34 @@ export const exportScene = async (snapshot: StoredScene, format: ExportFormat = 
   }
   const pages = Object.fromEntries(scenes.map((scene, index) => [scene.id, index === 0 ? 'index.html' : `scene-${index}.html`]));
   sceneZip.file('scene.json', JSON.stringify(projectData, null, 2));
+  sceneZip.file('vendor/three.min.js', threeSource);
+  sceneZip.file('vendor/GLTFLoader.js', gltfLoaderSource);
+  sceneZip.file('vendor/THREE-LICENSE.txt', threeLicense);
+  if (scenes.some(scene => scene.sceneOptions.environment?.enabled && scene.sceneOptions.environment.source === 'hdr')) {
+    sceneZip.file('vendor/RGBELoader.js', rgbeLoaderSource);
+  }
+  if (scenes.some(scene => scene.objects.some(obj => obj.properties.tween?.enabled))) {
+    sceneZip.file('vendor/tween.umd.js', tweenSource);
+    sceneZip.file('vendor/TWEEN-LICENSE.txt', tweenLicense);
+  }
+  if (scenes.some(scene => scene.objects.some(obj => obj.type === 'text3d'))) {
+    sceneZip.file('vendor/droid_sans_regular.typeface.json', textFontSource);
+    sceneZip.file('vendor/DROID-FONT-NOTICE.txt', textFontNotice);
+  }
+  if (scenes.some(scene => scene.objects.some(obj => obj.type === 'textSdf'))) {
+    for (const [name, source] of [
+      ['sdf-utils.js', sdfUtils], ['sdf-workers.js', sdfWorkers], ['sdf-generator.js', sdfGenerator],
+      ['sdf-bidi.js', sdfBidi], ['sdf-text.js', sdfText], ['SDF-UTILS-LICENSE.txt', sdfUtilsLicense],
+      ['SDF-WORKERS-LICENSE.txt', sdfWorkersLicense], ['SDF-GENERATOR-LICENSE.txt', sdfGeneratorLicense],
+      ['SDF-BIDI-LICENSE.txt', sdfBidiLicense], ['SDF-TEXT-LICENSE.txt', sdfTextLicense],
+      ['NOTO-SANS-LICENSE.txt', notoLicense]
+    ]) sceneZip.file(`vendor/${name}`, source);
+    for (const [name, url] of [['noto-latin.woff', latinFontUrl], ['noto-latin-ext.woff', extendedFontUrl]]) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Could not load bundled font: ${name} (HTTP ${response.status})`);
+      sceneZip.file(`vendor/${name}`, await response.arrayBuffer());
+    }
+  }
   if (scenes.some(scene => scene.sceneOptions.enableJQuery)) sceneZip.file('jquery.min.js', jquerySource);
   if (scenes.some(scene => scene.objects.some(obj => obj.properties.web?.kind === 'lottie' && obj.properties.web.lottieData))) {
     const { default: lottieSource } = await import('lottie-web/build/player/lottie.min.js?raw');
@@ -48,6 +102,9 @@ export const exportScene = async (snapshot: StoredScene, format: ExportFormat = 
   const sceneObjects = entry.objects;
   const sceneData = { version: projectData.version, lastModified: projectData.lastModified, objects: entry.objects, sceneOptions };
   const hasLottie = sceneObjects.some(obj => obj.properties.web?.kind === 'lottie' && obj.properties.web.lottieData);
+  const hasTween = sceneObjects.some(obj => obj.properties.tween?.enabled);
+  const hasSdf = sceneObjects.some(obj => obj.type === 'textSdf');
+  const hasHdr = sceneOptions.environment?.enabled && sceneOptions.environment.source === 'hdr';
   const scriptName = index === 0 ? 'scene.js' : `scene-${index}.js`;
 
   const title = (sceneOptions.name || 'Game Scene').replace(/[&<>"']/g, (character) => ({
@@ -156,11 +213,48 @@ export const exportScene = async (snapshot: StoredScene, format: ExportFormat = 
   <button id="enable-sound" hidden>Enable sound</button>
   <div id="load-error" role="alert" hidden></div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   ${sceneOptions.enableJQuery ? '<script src="jquery.min.js"></script>' : ''}
   ${hasLottie ? '<script src="lottie.min.js"></script>' : ''}
-  <script src="${scriptName}"></script>
+  <script>
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Could not load ' + src));
+        document.head.appendChild(script);
+      });
+    }
+    async function loadWithFallback(local, cdn, ready) {
+      try {
+        await loadScript(local);
+        if (!ready()) throw new Error('Invalid local library: ' + local);
+      } catch (error) {
+        console.warn('Local library failed; trying CDN:', error);
+        await loadScript(cdn);
+        if (!ready()) throw new Error('Invalid CDN library: ' + cdn);
+      }
+    }
+    (async () => {
+      await loadWithFallback('vendor/three.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js',
+        () => window.THREE && window.THREE.REVISION === '128');
+      await loadWithFallback('vendor/GLTFLoader.js', 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js',
+        () => typeof window.THREE.GLTFLoader === 'function');
+      ${hasHdr ? "await loadScript('vendor/RGBELoader.js'); if (typeof window.THREE.RGBELoader !== 'function') throw new Error('HDR loader failed to load');" : ''}
+      ${hasTween ? "await loadScript('vendor/tween.umd.js');" : ''}
+      ${hasSdf ? `for (const name of ['sdf-utils.js', 'sdf-workers.js', 'sdf-generator.js', 'sdf-bidi.js', 'sdf-text.js']) {
+        await loadScript('vendor/' + name);
+      }
+      if (!window.troika_three_text?.Text) throw new Error('SDF text library failed to load');
+      window.troika_three_text.configureTextBuilder({ defaultFontURL: 'vendor/noto-latin.woff', useWorker: false });` : ''}
+      await loadScript('${scriptName}');
+    })().catch(error => {
+      console.error('Failed to load game libraries:', error);
+      const message = document.getElementById('load-error');
+      message.textContent = 'Could not load the game: ' + error.message;
+      message.hidden = false;
+    });
+  </script>
 </body>
 </html>`;
 
@@ -184,11 +278,15 @@ function openScene(id) {
 }
 
 let scene, camera, renderer, clock;
+let textFont;
+let environmentTexture;
 let sceneObjects = [];
 let keys = {};
 let objectScripts;
 let modelAnimations;
 let propertyAnimations;
+let tweenAnimations;
+let floatEffects;
 let timeline;
 let triggerSystem;
 let collisionSystem;
@@ -199,6 +297,10 @@ const createSceneAI = ${createSceneAI.toString()};
 const createPathFollowers = ${createPathFollowers.toString()};
 const createModelAnimations = ${createModelAnimations.toString()};
 const createPropertyAnimations = ${createPropertyAnimations.toString()};
+const createTweenAnimations = ${createTweenAnimations.toString()};
+const createFloatEffects = ${createFloatEffects.toString()};
+const createEnvironmentTexture = ${createEnvironmentTexture.toString()};
+const isSupportedSdfText = ${isSupportedSdfText.toString()};
 const createTimeline = ${createTimeline.toString()};
 const createTimelineMedia = ${createTimelineMedia.toString()};
 const createWebLayer = ${createWebLayer.toString()};
@@ -241,6 +343,11 @@ async function init() {
   renderer.shadowMap.enabled = sceneData.sceneOptions.shadowsEnabled !== false;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   document.body.appendChild(renderer.domElement);
+  if (sceneData.sceneOptions.environment?.enabled) {
+    environmentTexture = await createEnvironmentTexture(sceneData.sceneOptions.environment, THREE, url => new THREE.RGBELoader().loadAsync(url));
+    scene.environment = environmentTexture;
+    if (sceneData.sceneOptions.environment.background) scene.background = environmentTexture;
+  }
 
   // Lighting
   const ambientLight = new THREE.AmbientLight(0xffffff, sceneData.sceneOptions.ambientLightIntensity ?? 0.5);
@@ -254,6 +361,9 @@ async function init() {
   clock = new THREE.Clock();
 
   // Load scene objects
+  if (sceneData.objects.some(obj => obj.type === 'text3d')) {
+    textFont = await new THREE.FontLoader().loadAsync('vendor/droid_sans_regular.typeface.json');
+  }
   await loadSceneObjects();
   if (sceneData.sceneOptions.activeCameraId) {
     const source = sceneObjects.find(obj => obj.id === sceneData.sceneOptions.activeCameraId && obj.object.isPerspectiveCamera);
@@ -308,6 +418,19 @@ async function init() {
     error.textContent = 'Animation error: ' + message;
     error.hidden = false;
   }, window, openScene);
+  ${hasTween ? `if (!window.TWEEN || typeof window.TWEEN.Tween !== 'function') throw new Error('Tween.js failed to load');
+  tweenAnimations = createTweenAnimations(sceneObjects, window.TWEEN, message => {
+    console.error('Tween animation error:', message);
+    const error = document.getElementById('load-error');
+    error.textContent = 'Animation error: ' + message;
+    error.hidden = false;
+  });` : ''}
+  floatEffects = createFloatEffects(sceneObjects, message => {
+    console.error('Float error:', message);
+    const error = document.getElementById('load-error');
+    error.textContent = 'Float error: ' + message;
+    error.hidden = false;
+  });
   const cleanupWeb = createWebLayer(document.body, sceneObjects, {
     editing: false, width: '100%', scene, camera, three: THREE, lottie: typeof lottie === 'undefined' ? undefined : lottie,
     onPlayClip: (id, clipIndex) => modelAnimations.play(id, clipIndex),
@@ -345,7 +468,7 @@ async function init() {
     const item = sceneObjects.find(obj => obj.object === target);
     if (item) objectScripts.click(item.id);
   });
-  window.addEventListener('pagehide', () => { sceneActive = false; playerCamera?.stop(); timeline?.stop(); cleanupWeb(); objectScripts.stop(); modelAnimations.stop(); propertyAnimations.stop(); });
+  window.addEventListener('pagehide', () => { sceneActive = false; playerCamera?.stop(); timeline?.stop(); cleanupWeb(); objectScripts.stop(); modelAnimations.stop(); propertyAnimations.stop(); tweenAnimations?.stop(); environmentTexture?.dispose(); });
 
   const sounds = sceneObjects.flatMap(obj => (obj.properties.sounds || [])
     .filter(sound => sound.autoPlay && !(sceneData.sceneOptions.timeline?.sounds || [])
@@ -428,6 +551,31 @@ async function loadSceneObjects() {
           new THREE.MeshStandardMaterial({ color: objData.properties.color || 0x808080 })
         );
         break;
+      case 'text3d': {
+        const settings = objData.properties.text3d;
+        if (!settings || typeof settings.text !== 'string' || settings.text.length > 200 ||
+            !Number.isFinite(settings.size) || settings.size <= 0 || settings.size > 100 ||
+            !Number.isFinite(settings.depth) || settings.depth < 0 || settings.depth > 50) {
+          throw new Error('Invalid 3D text settings: ' + objData.name);
+        }
+        object = new THREE.Mesh(new THREE.TextGeometry(settings.text, {
+          font: textFont, size: settings.size, height: settings.depth, curveSegments: 4
+        }), new THREE.MeshStandardMaterial({ color: objData.properties.color || 0x808080 }));
+        break;
+      }
+      case 'textSdf': {
+        const settings = objData.properties.text3d;
+        if (!settings || typeof settings.text !== 'string' || settings.text.length > 200 || !isSupportedSdfText(settings.text) ||
+            !Number.isFinite(settings.size) || settings.size <= 0 || settings.size > 100) {
+          throw new Error('SDF text supports Latin-1 and Turkish characters only: ' + objData.name);
+        }
+        object = new window.troika_three_text.Text();
+        object.font = 'vendor/noto-latin-ext.woff';
+        object.fontSize = settings.size;
+        object.text = settings.text;
+        await new Promise(resolve => object.sync(resolve));
+        break;
+      }
 
       case 'sphere':
         object = new THREE.Mesh(
@@ -557,6 +705,7 @@ function animate() {
   requestAnimationFrame(animate);
 
   const delta = clock.getDelta();
+  floatEffects.before();
   objectScripts.update(delta);
   modelAnimations.update(delta);
 
@@ -567,7 +716,9 @@ function animate() {
   triggerSystem.update();
   advanceCharacterControllers(sceneObjects, input, THREE, camera);
   propertyAnimations.update(delta);
+  tweenAnimations?.update(delta);
   timeline?.update(delta);
+  floatEffects.update(delta);
   playerCamera?.update();
 
   renderer.render(scene, camera);
@@ -611,7 +762,7 @@ function App() {
 
 createRoot(document.getElementById('root')).render(<App />);
 `);
-    zip.file('README.txt', 'Run npm install, then npm run dev. The generated scene runs in an iframe from public/scene. Three.js and GLTFLoader require network access.');
+    zip.file('README.txt', 'Run npm install, then npm run dev. The generated scene runs in an iframe from public/scene. Three.js and GLTFLoader are included locally, with CDN fallback.');
   } else if (format === 'wordpress') {
     zip.file('three-scene-export/three-scene-export.php', `<?php
 /*
@@ -625,7 +776,7 @@ add_shortcode('three_scene', function () {
     return '<iframe title="3D scene" src="' . esc_url($url) . '" style="display:block;width:100%;height:100vh;border:0" allow="fullscreen; autoplay"></iframe>';
 });
 `);
-    zip.file('three-scene-export/README.txt', 'Install and activate this ZIP as a WordPress plugin, then add [three_scene] to a page. The scene runs in an iframe. Three.js and GLTFLoader require network access.');
+    zip.file('three-scene-export/README.txt', 'Install and activate this ZIP as a WordPress plugin, then add [three_scene] to a page. Three.js and GLTFLoader are included locally, with CDN fallback.');
   }
 
   const content = await zip.generateAsync({ type: 'blob' });

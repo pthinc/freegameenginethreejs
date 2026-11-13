@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { useEditorStore } from '../store/editorStore';
-import { Cuboid as Cube, Cylinder, Sun, Square, Sparkles, Camera, Plus, Cherry as Sphere, Cone, Upload } from 'lucide-react';
+import { Cuboid as Cube, Cylinder, Sun, Square, Sparkles, Camera, Plus, Cherry as Sphere, Cone, Upload, Type } from 'lucide-react';
 import * as THREE from 'three';
 import { toast } from 'react-hot-toast';
 import { loadGLBModel, createSceneObjectFromModel } from '../services/modelLoader';
@@ -8,6 +8,7 @@ import { SceneObject } from '../types/editor';
 import { readFileDataUrl } from '../services/media';
 import { WebElements } from './WebElements';
 import { registerAsset } from '../services/assetLibrary';
+import { createSdfText, createTextGeometry } from '../services/sceneObjects';
 
 const ComponentButton = ({ name, icon, onAdd }: { name: string; icon: React.ReactNode; onAdd: () => void }) => {
   return (
@@ -51,6 +52,13 @@ export const Sidebar: React.FC = () => {
             new THREE.BoxGeometry(),
             new THREE.MeshStandardMaterial({ color: 0x808080 })
           );
+          break;
+        case 'text3d':
+          object = new THREE.Mesh(createTextGeometry({ text: '3D Text', size: 1, depth: 0.15 }),
+            new THREE.MeshStandardMaterial({ color: 0x808080 }));
+          break;
+        case 'textSdf':
+          object = createSdfText({ text: 'SDF Text', size: 1, depth: 0 });
           break;
         case 'sphere':
           object = new THREE.Mesh(
@@ -103,6 +111,8 @@ export const Sidebar: React.FC = () => {
           ],
           scale: [1, 1, 1],
           color: type.includes('Light') ? '#ffffff' : '#808080',
+          ...(type === 'text3d' ? { text3d: { text: '3D Text', size: 1, depth: 0.15 } } : {}),
+          ...(type === 'textSdf' ? { text3d: { text: 'SDF Text', size: 1, depth: 0 } } : {}),
           intensity: type.includes('Light') ? 1 : undefined,
           angle: type === 'spotLight' ? 45 : undefined,
           fov: type === 'camera' ? 75 : undefined,
@@ -125,6 +135,8 @@ export const Sidebar: React.FC = () => {
   const components = [
     { id: 'ground', name: 'Ground', icon: <Square className="w-6 h-6" /> },
     { id: 'box', name: 'Box', icon: <Cube className="w-6 h-6" /> },
+    { id: 'text3d', name: '3D Text', icon: <Type className="w-6 h-6" /> },
+    { id: 'textSdf', name: 'SDF Text', icon: <Type className="w-6 h-6" /> },
     { id: 'sphere', name: 'Sphere', icon: <Sphere className="w-6 h-6" /> },
     { id: 'cylinder', name: 'Cylinder', icon: <Cylinder className="w-6 h-6" /> },
     { id: 'cone', name: 'Cone', icon: <Cone className="w-6 h-6" /> },

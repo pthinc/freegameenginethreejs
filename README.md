@@ -32,6 +32,8 @@ web experiences with Three.js, React and TypeScript.
 - Compose web interfaces over 3D scenes and link pages with component actions.
 - Animate objects, cameras and web components with a timeline and
   device-specific settings.
+- Configure Tween.js object animations, Float-style motion, 3D and SDF text,
+  and procedural or uploaded HDR environments.
 - Preview scenes with basic physics, character controls and grid-based AI
   navigation.
 - Save projects locally and undo or redo up to 20 project changes.
@@ -95,14 +97,17 @@ After building the Windows installer, `npm run test:desktop` tests the packaged
 desktop app using an isolated data directory.
 Browser tests use an isolated temporary project store. The optional VTOL
 showcase requires a locally supplied GLB and `VTOL_SHOWCASE=1`; see the test
-and [FEATURES.md](FEATURES.md). Some export tests require internet access.
+and [FEATURES.md](FEATURES.md).
 
 ## Export and security
 
 HTML exports contain the generated scene player. React and WordPress exports
 embed that player in an iframe rather than producing native components or
-blocks. The player loads Three.js and GLTFLoader from public CDNs, so internet
-access and an appropriate hosting policy are required.
+blocks. The player includes Three.js and GLTFLoader locally and falls back to
+public CDNs if local loading fails. Imported media is
+packaged under the player’s `web3dassets` directory. Serve HTML exports over
+HTTP and deploy the entire ZIP contents together; external URLs and embedded
+Lottie data are not repackaged.
 
 Scene scripts execute with full browser access. Run only trusted projects and
 review generated code. AI requests send prompts and, for scene-agent requests,
@@ -112,7 +117,9 @@ server environment, not in source files; see [FEATURES.md](FEATURES.md).
 
 ## License
 
-The existing [license summary](license.md) describes proprietary/commercial
-terms and refers to a separate formal `LICENSE` file, which is not currently
-present. Confirm the applicable terms with the project owner before reuse or
-redistribution; the project name alone does not grant an open-source license.
+The [license](LICENSE) permits noncommercial use but restricts redistribution
+and commercial use, so the project is not open source. See the
+[overview](license.md) and full license for details. Third-party components
+have separate licenses.
+The desktop package includes notices in `resources/third-party`; exports include
+the notices for the libraries and fonts they use. GSAP is not included.

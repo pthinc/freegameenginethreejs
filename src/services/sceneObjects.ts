@@ -1,10 +1,48 @@
 import * as THREE from 'three';
 import { SceneObject } from '../types/editor';
 import { createSceneObjectFromModel, loadGLBModel } from './modelLoader';
+import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js';
+import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
+import droidFont from 'three/examples/fonts/droid/droid_sans_regular.typeface.json';
+import { Text, configureTextBuilder } from 'troika-three-text';
+import latinFontUrl from '@fontsource/noto-sans/files/noto-sans-latin-400-normal.woff?url';
+import extendedFontUrl from '@fontsource/noto-sans/files/noto-sans-latin-ext-400-normal.woff?url';
 
 type Properties = SceneObject['properties'];
 type SceneRecord = Omit<SceneObject, 'object'>;
 type Material = THREE.MeshStandardMaterial | THREE.MeshBasicMaterial | THREE.MeshPhongMaterial | THREE.MeshLambertMaterial;
+const textFont = new FontLoader().parse(droidFont);
+configureTextBuilder({ defaultFontURL: latinFontUrl, useWorker: false });
+
+export function isSupportedSdfText(text: string) {
+  return [...text].every(char => {
+    const code = char.codePointAt(0)!;
+    return code === 9 || code === 10 || (code >= 32 && code <= 126) || (code >= 160 && code <= 255) ||
+      [0x11e, 0x11f, 0x130, 0x131, 0x15e, 0x15f].includes(code);
+  });
+}
+
+export function createSdfText(settings: NonNullable<Properties['text3d']>) {
+  if (typeof settings.text !== 'string' || settings.text.length > 200 ||
+      !isSupportedSdfText(settings.text) || !Number.isFinite(settings.size) || settings.size <= 0 || settings.size > 100) {
+    throw new Error('SDF text supports Latin-1 and Turkish characters only');
+  }
+  const object = new Text();
+  object.text = settings.text;
+  object.fontSize = settings.size;
+  object.font = extendedFontUrl;
+  object.sync();
+  return object;
+}
+
+export function createTextGeometry(settings: NonNullable<Properties['text3d']>) {
+  if (typeof settings.text !== 'string' || settings.text.length > 200 ||
+      !Number.isFinite(settings.size) || settings.size <= 0 || settings.size > 100 ||
+      !Number.isFinite(settings.depth) || settings.depth < 0 || settings.depth > 50) {
+    throw new Error('Invalid 3D text settings');
+  }
+  return new TextGeometry(settings.text, { font: textFont, size: settings.size, height: settings.depth, curveSegments: 4 });
+}
 
 function isEditableMaterial(material: THREE.Material): material is Material {
   return material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshBasicMaterial ||
@@ -88,6 +126,14 @@ export async function restoreSceneObject(record: SceneRecord): Promise<SceneObje
     case 'box':
     case '3d':
       object = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+      break;
+    case 'text3d':
+      if (!p.text3d) throw new Error(`Text "${record.name}" has no text settings`);
+      object = new THREE.Mesh(createTextGeometry(p.text3d), new THREE.MeshStandardMaterial());
+      break;
+    case 'textSdf':
+      if (!p.text3d) throw new Error(`Text "${record.name}" has no text settings`);
+      object = createSdfText(p.text3d);
       break;
     case 'sphere':
       object = new THREE.Mesh(new THREE.SphereGeometry(0.5, 32, 32), new THREE.MeshStandardMaterial());

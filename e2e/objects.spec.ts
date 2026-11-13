@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
 import JSZip from 'jszip';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { addObject } from './helpers';
+import { addObject, extractExport, serveExport } from './helpers';
 
 test.afterEach(async ({ request }) => {
   const response = await request.get('/api/projects');
@@ -63,12 +63,8 @@ test('scene agent creates objects, adds assets and removes scene instances after
   expect(data.objects.map(object => object.name)).toEqual(['Agent sphere', 'Agent image', 'Agent title']);
   expect(data.objects[0].properties.position).toEqual([1, 2, 3]);
   const directory = testInfo.outputPath('agent-add-remove');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
   page.once('dialog', dialog => dialog.accept());
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await expect(page.getByRole('heading', { name: 'Created by agent' })).toHaveCSS('color', 'rgb(23, 45, 67)', { timeout: 15000 });
   await expect(page.locator('body')).toHaveAttribute('data-sphere', 'started');
   await expect(page.locator('#load-error')).toBeHidden();
@@ -115,10 +111,7 @@ test('model discovery and agent timeline proposals are visible and survive expor
   const scene = JSON.parse(await zip.file('scene.json')!.async('string')) as { sceneOptions: { timeline: { tracks: { property: string }[] } } };
   expect(scene.sceneOptions.timeline.tracks[0].property).toBe('web.opacity');
   const directory = testInfo.outputPath('agent-timeline');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect.poll(async () => Number(await heading.evaluate(element => getComputedStyle(element).opacity))).toBeGreaterThan(0);
   await expect(heading).toHaveCSS('color', 'rgb(18, 52, 86)');
@@ -233,10 +226,7 @@ test('scene agent reviews multiple object edits, screenshot and CSS through Play
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('scene-agent');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   page.once('dialog', dialog => dialog.accept());
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect(page.getByRole('heading', { name: 'Agent heading' })).toHaveCSS('color', 'rgb(12, 34, 56)', { timeout: 15000 });
@@ -321,6 +311,54 @@ test('new AI providers can be selected and send the configured model or workspac
   }
 });
 
+test('single-object assistant uses web script context and applies to the selected component', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add web heading' }).click();
+  await page.getByLabel('Web script').fill("return { start() { element.dataset.old = 'yes'; } };");
+  await page.route('**/api/ai/generate', async route => {
+    expect(route.request().postDataJSON().targetKind).toBe('web');
+    await route.fulfill({ json: { code: "return { start() { element.dataset.agent = 'yes'; } };" } });
+  });
+  await page.getByRole('button', { name: 'Options', exact: true }).click();
+  await expect(page.getByText('Target: Heading (web component).', { exact: false })).toBeVisible();
+  await page.getByLabel('AI prompt').fill('Update heading');
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Generate code' }).click();
+  await page.getByText('Current script', { exact: true }).click();
+  await expect(page.getByRole('dialog').getByText("return { start() { element.dataset.old = 'yes'; } };")).toBeVisible();
+  await page.getByRole('button', { name: 'Apply to selected object' }).click();
+  await expect(page.getByLabel('Web script')).toHaveValue("return { start() { element.dataset.agent = 'yes'; } };");
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Your heading' })).toHaveAttribute('data-agent', 'yes');
+});
+
+test('single-object assistant rejects stale targets and clears code after a failed regeneration', async ({ page }) => {
+  await page.goto('/');
+  await addObject(page, 'Box');
+  await page.getByRole('button', { name: 'Add web heading' }).click();
+  let fail = false;
+  await page.route('**/api/ai/generate', async route => {
+    if (fail) await route.fulfill({ status: 502, json: { error: 'Generation failed' } });
+    else await route.fulfill({ json: { code: "return { start() { element.dataset.agent = 'yes'; } };" } });
+  });
+  await page.getByRole('button', { name: 'Options', exact: true }).click();
+  await page.getByLabel('AI prompt').fill('Update heading');
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Generate code' }).click();
+  await expect(page.getByLabel('Generated code')).toBeVisible();
+  await page.getByRole('button', { name: 'Select', exact: true }).first().evaluate((button: HTMLButtonElement) => button.click());
+  await page.getByRole('button', { name: 'Apply to selected object' }).click();
+  await expect(page.getByText('The selected target changed.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  fail = true;
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Generate code' }).click();
+  await expect(page.getByText('Generation failed; no changes were applied.')).toBeVisible();
+  await expect(page.getByLabel('Generated code')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Apply to selected object' })).toHaveCount(0);
+});
+
 test('scroll rotates the chosen axis in Play and exported code', async ({ page }, testInfo) => {
   await page.goto('/');
   await addObject(page, 'Box');
@@ -366,10 +404,7 @@ test('scroll rotates the chosen axis in Play and exported code', async ({ page }
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('scroll-rotation');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   page.once('dialog', dialog => dialog.accept());
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect(page.locator('canvas')).toBeVisible({ timeout: 15000 });
@@ -438,10 +473,7 @@ test('selected play camera persists and matches the exported player', async ({ p
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('camera-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   page.once('dialog', dialog => dialog.accept());
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect.poll(() => page.locator('body').getAttribute('data-camera-pose'), { timeout: 15000 }).not.toBeNull();
@@ -489,10 +521,7 @@ test('non-looping object animations run from start and hold their end in editor 
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('object-animations');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   page.once('dialog', dialog => dialog.accept());
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect.poll(movement, { timeout: 15000 }).toBeGreaterThan(0.99);
@@ -529,10 +558,7 @@ test('3D and web components coexist through save, play and export', async ({ pag
   const snapshot = JSON.parse(await zip.file('scene.json')!.async('string')) as { objects: { type: string }[] };
   expect(snapshot.objects).toHaveLength(15);
   const directory = testInfo.outputPath('mixed-components');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect(page.locator('.engine-web-node[data-kind="button"]')).toBeVisible({ timeout: 15000 });
   await expect(page.locator('#load-error')).toBeHidden();
@@ -587,10 +613,7 @@ test('object metadata and script survive reload and run in editor and export', a
   expect(scene.objects[0].properties.className).toBe('Player');
   expect(scene.objects[0].properties.tags).toEqual(['hero', 'friendly']);
   const directory = testInfo.outputPath('script-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   page.once('dialog', dialog => dialog.accept());
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect.poll(() => page.evaluate(() => Function('return sceneObjects[0]?.object.position.x ?? 0')() as number), { timeout: 15000 }).toBeGreaterThan(0.1);

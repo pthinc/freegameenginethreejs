@@ -68,8 +68,8 @@ function App() {
     if (exporting) return;
     flushSync(() => setExporting(true));
     try {
-      const { sceneOptions } = useEditorStore.getState();
-      const snapshot = createProjectSnapshot(sceneObjects, sceneOptions);
+      const { sceneObjects: currentObjects, sceneOptions, assets } = useEditorStore.getState();
+      const snapshot = { ...createProjectSnapshot(currentObjects, sceneOptions), assets: structuredClone(assets) };
       const { exportScene } = await import('./services/sceneExporter');
       await exportScene(snapshot, exportFormat);
       toast.success('Scene exported successfully!');

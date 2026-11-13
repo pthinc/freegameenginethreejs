@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
 import JSZip from 'jszip';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { addObject } from './helpers';
+import { addObject, extractExport, serveExport } from './helpers';
 
 test.afterEach(async ({ request }) => {
   const response = await request.get('/api/projects');
@@ -58,10 +58,7 @@ test('device layouts inherit, reset and follow resize in the exported player', a
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('responsive-layout');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   for (const [width, fontSize, elementWidth] of [[1025, '40px', '300px'], [1024, '28px', '300px'],
     [768, '28px', '300px'], [767, '48px', '200px']] as const) {
@@ -118,10 +115,7 @@ test('visual controls override scripted backgrounds and allow 3D interaction in 
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('visual-controls');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   page.once('dialog', dialog => dialog.accept());
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect(section).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
@@ -243,16 +237,12 @@ test('slider nests responsive content and media, persists, and runs in export', 
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('slider-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await expect(slides.first()).toBeVisible({ timeout: 15000 });
   await expect(slides.last()).toBeHidden();
   await expect(slider).toHaveCSS('border-radius', '24px');
-  await expect(slides.first().locator('audio')).toHaveAttribute('src', /^data:audio\/wav/);
-  await expect(slides.first().locator('.engine-web-background-video')).toHaveAttribute('src', /^data:video\/webm/);
+  await expect(slides.first().locator('audio')).toHaveAttribute('src', /^web3dassets\/.*\.wav$/);
+  await expect(slides.first().locator('.engine-web-background-video')).toHaveAttribute('src', /^web3dassets\/.*\.webm$/);
   await expect.poll(() => slides.first().locator('.engine-web-background-video').evaluate(element => (element as HTMLVideoElement).currentTime)).toBeGreaterThan(0);
   await slides.first().locator('audio').evaluate(async element => { const sound = element as HTMLAudioElement; sound.muted = true; await sound.play(); });
   await page.getByRole('button', { name: 'Next slide' }).click();
@@ -337,11 +327,7 @@ test('video components import and play locally in editor and export', async ({ p
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('video-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   const videos = page.locator('.engine-web-node[data-kind="video"]');
   await expect(videos).toHaveCount(2, { timeout: 15000 });
   for (let index = 0; index < 2; index++) {
@@ -388,10 +374,7 @@ test('Lottie JSON animates in editor and self-contained export', async ({ page }
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   expect(zip.file('lottie.min.js')).not.toBeNull();
   const directory = testInfo.outputPath('lottie-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json', 'lottie.min.js']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect(node.locator('svg path')).toBeVisible({ timeout: 15000 });
   const exportedFirst = await group.getAttribute('transform');
@@ -454,13 +437,9 @@ test('container cards, image formats and margins survive responsive export', asy
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const scene = JSON.parse(await zip.file('scene.json')!.async('string'));
   expect(scene.objects.filter((item: { properties: { web?: { kind: string } } }) => item.properties.web?.kind === 'card')).toHaveLength(4);
-  expect(await zip.file('scene.js')!.async('string')).toContain('data:image/svg+xml');
+  expect(await zip.file('scene.js')!.async('string')).toContain('web3dassets/icon.svg');
   const directory = testInfo.outputPath('container-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await expect(container.locator('img')).toHaveCount(4, { timeout: 15000 });
   await expect.poll(columns).toBe(4);
   await page.setViewportSize({ width: 800, height: 500 });
@@ -517,10 +496,7 @@ test('visual web components persist, interact with 3D and export with optional j
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   expect(zip.file('jquery.min.js')).not.toBeNull();
   const directory = testInfo.outputPath('web-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json', 'jquery.min.js']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   page.once('dialog', dialog => dialog.accept());
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect(page.getByRole('heading', { name: 'Hello camera' })).toBeVisible({ timeout: 15000 });
@@ -603,10 +579,7 @@ test('keyboard and scroll triggers work while the 3D scene is playing', async ({
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('scroll-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   page.once('dialog', dialog => dialog.accept());
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect(page.getByRole('heading', { name: 'Toggle me' })).toBeVisible({ timeout: 15000 });
@@ -674,10 +647,7 @@ test('non-interactive web sections do not block 3D clicks', async ({ page }, tes
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('click-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   page.once('dialog', dialog => dialog.accept());
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect(page.locator('body')).toHaveAttribute('data-test-hits', '0', { timeout: 15000 });

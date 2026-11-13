@@ -66,6 +66,27 @@ export interface SceneObject {
     opacity?: number;
     materialType?: 'standard' | 'basic' | 'phong' | 'lambert';
     modelData?: string;
+    text3d?: {
+      text: string;
+      size: number;
+      depth: number;
+    };
+    tween?: {
+      enabled: boolean;
+      property: 'position' | 'rotation' | 'scale' | 'opacity';
+      target: [number, number, number];
+      opacity: number;
+      duration: number;
+      easing: 'linear' | 'smooth' | 'out';
+      repeat: boolean;
+      yoyo: boolean;
+    };
+    float?: {
+      enabled: boolean;
+      speed: number;
+      height: number;
+      rotation: number;
+    };
     modelAnimation?: {
       clipIndex: number;
       autoPlay: boolean;

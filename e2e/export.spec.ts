@@ -1,20 +1,14 @@
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import JSZip from 'jszip';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { addObject, enablePlayer } from './helpers';
+import { readFile } from 'node:fs/promises';
+import { addObject, enablePlayer, playerState, serveExport } from './helpers';
 
 async function openDownloadedGame(page: Page, testInfo: TestInfo) {
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await downloadPromise).path())!));
   const directory = testInfo.outputPath('downloaded-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await expect(page.locator('canvas')).toBeVisible({ timeout: 15000 });
 }
 
@@ -27,9 +21,264 @@ test('export packages scene data and player files', async ({ page }) => {
   const path = await download.path();
   expect(path).not.toBeNull();
   const zip = await JSZip.loadAsync(await readFile(path!));
-  expect(Object.keys(zip.files).sort()).toEqual(['index.html', 'scene.js', 'scene.json']);
+  expect(Object.keys(zip.files).sort()).toEqual(['index.html', 'scene.js', 'scene.json', 'vendor/', 'vendor/GLTFLoader.js', 'vendor/THREE-LICENSE.txt', 'vendor/three.min.js']);
   const scene = JSON.parse(await zip.file('scene.json')!.async('string'));
   expect(scene.objects[0].properties.characterController.enabled).toBe(true);
+});
+
+test('export falls back to CDN for missing or invalid local libraries and reports total failure', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await addObject(page, 'Box');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
+  const three = await zip.file('vendor/three.min.js')!.async('string');
+  const loader = await zip.file('vendor/GLTFLoader.js')!.async('string');
+  let local = 'missing';
+  let failCdn = false;
+  const fallbackRequests: string[] = [];
+  await page.route('**/vendor/*.js', route => local === 'missing'
+    ? route.abort('failed') : route.fulfill({ contentType: 'text/javascript', body: '/* Invalid library */' }));
+  await page.route('https://cdnjs.cloudflare.com/**', route => {
+    fallbackRequests.push('three');
+    return failCdn ? route.abort('failed') : route.fulfill({ contentType: 'text/javascript', body: three });
+  });
+  await page.route('https://cdn.jsdelivr.net/**', route => {
+    fallbackRequests.push('loader');
+    return failCdn ? route.abort('failed') : route.fulfill({ contentType: 'text/javascript', body: loader });
+  });
+  const url = await serveExport(page, zip, testInfo.outputPath('cdn-fallback'));
+  await page.goto(url);
+  await expect(page.locator('canvas')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('#load-error')).toBeHidden();
+  expect(fallbackRequests).toEqual(['three', 'loader']);
+  local = 'invalid';
+  fallbackRequests.length = 0;
+  await page.reload();
+  await expect(page.locator('canvas')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('#load-error')).toBeHidden();
+  expect(fallbackRequests).toEqual(['three', 'loader']);
+  failCdn = true;
+  await page.reload();
+  await expect(page.locator('#load-error')).toContainText('Could not load the game:');
+  await expect(page.locator('#load-error')).toBeVisible();
+  await expect(page.locator('canvas')).toHaveCount(0);
+});
+
+test('Tween.js and Float persist and run offline in all export formats', async ({ page, context }, testInfo) => {
+  await page.goto('/');
+  await addObject(page, 'Box');
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('button', { name: 'Tween Animation' }).click();
+  await page.getByLabel('Enable tween animation').check();
+  await page.getByLabel('Tween target X').fill('2');
+  await page.getByLabel('Tween duration').fill('0.4');
+  await page.getByRole('button', { name: 'Float', exact: true }).click();
+  await page.getByLabel('Enable float').check();
+  await page.getByLabel('Float height').fill('0.7');
+  await page.reload();
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('button', { name: 'Tween Animation' }).click();
+  await expect(page.getByLabel('Tween target X')).toHaveValue('2');
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect.poll(async () => (await playerState(page)).position[0]).toBeCloseTo(2, 1);
+  await expect.poll(async () => Math.abs((await playerState(page)).position[1])).toBeGreaterThan(0.05);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  expect((await playerState(page)).position[1]).toBeCloseTo(0);
+
+  for (const format of ['html', 'react', 'wordpress'] as const) {
+    await page.getByLabel('Export format').selectOption(format);
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
+    const prefix = format === 'html' ? '' : format === 'react' ? 'public/scene/' : 'three-scene-export/scene/';
+    expect(zip.file(`${prefix}vendor/tween.umd.js`)).not.toBeNull();
+    expect(zip.file(`${prefix}vendor/TWEEN-LICENSE.txt`)).not.toBeNull();
+    const player = await context.newPage();
+    try {
+      const external: string[] = [];
+      await player.route('https://**', route => {
+        external.push(route.request().url());
+        return route.abort('internetdisconnected');
+      });
+      const root = await serveExport(player, zip, testInfo.outputPath(`tween-${format}`));
+      await player.goto(root.replace('index.html', `${prefix}index.html`));
+      await expect(player.locator('canvas')).toBeVisible({ timeout: 15000 });
+      await expect.poll(() => player.evaluate(() => Function('return sceneObjects[0].object.position.x')() as number), { timeout: 15000 }).toBeCloseTo(2, 1);
+      await expect.poll(() => player.evaluate(() => Math.abs(Function('return sceneObjects[0].object.position.y')() as number))).toBeGreaterThan(0.05);
+      await expect(player.locator('#load-error')).toBeHidden();
+      expect(external).toEqual([]);
+    } finally {
+      await player.close();
+    }
+  }
+});
+
+test('3D text with Turkish glyphs persists and exports its font offline', async ({ page, context }, testInfo) => {
+  await page.goto('/');
+  await addObject(page, '3D Text');
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('button', { name: '3D Text', exact: true }).last().click();
+  await page.getByLabel('3D text', { exact: true }).fill('İşçi');
+  await page.getByLabel('3D text depth').fill('0.4');
+  await expect.poll(() => page.evaluate(() => new Promise<number | undefined>((resolve, reject) => {
+    const request = indexedDB.open('game-engine-editor');
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const database = request.result;
+      const read = database.transaction('editor').objectStore('editor').get('current');
+      read.onerror = () => reject(read.error);
+      read.onsuccess = () => { resolve(read.result?.currentScene.objects[0]?.properties.text3d?.depth); database.close(); };
+    };
+  }))).toBe(0.4);
+  await page.reload();
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('button', { name: '3D Text', exact: true }).last().click();
+  await expect(page.getByLabel('3D text', { exact: true })).toHaveValue('İşçi');
+  await expect(page.getByLabel('3D text depth')).toHaveValue('0.4');
+  for (const format of ['html', 'react', 'wordpress'] as const) {
+    await page.getByLabel('Export format').selectOption(format);
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
+    const prefix = format === 'html' ? '' : format === 'react' ? 'public/scene/' : 'three-scene-export/scene/';
+    expect(zip.file(`${prefix}vendor/droid_sans_regular.typeface.json`)).not.toBeNull();
+    expect(zip.file(`${prefix}vendor/DROID-FONT-NOTICE.txt`)).not.toBeNull();
+    const player = await context.newPage();
+    try {
+      const external: string[] = [];
+      await player.route('https://**', route => {
+        external.push(route.request().url());
+        return route.abort('internetdisconnected');
+      });
+      const root = await serveExport(player, zip, testInfo.outputPath(`text-${format}`));
+      await player.goto(root.replace('index.html', `${prefix}index.html`));
+      await expect(player.locator('canvas')).toBeVisible({ timeout: 15000 });
+      const geometry = await player.evaluate(() => Function(`const g = sceneObjects[0].object.geometry;
+        g.computeBoundingBox(); return { count: g.attributes.position.count, depth: g.boundingBox.max.z - g.boundingBox.min.z };`)() as { count: number; depth: number });
+      expect(geometry.count).toBeGreaterThan(0);
+      expect(geometry.depth).toBeCloseTo(0.4, 2);
+      await expect(player.locator('#load-error')).toBeHidden();
+      expect(external).toEqual([]);
+    } finally {
+      await player.close();
+    }
+  }
+});
+
+test('SDF text renders Turkish and Latin characters offline in all exports', async ({ page, context }, testInfo) => {
+  test.setTimeout(120000);
+  await page.goto('/');
+  await addObject(page, 'SDF Text');
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('button', { name: 'SDF Text', exact: true }).last().click();
+  await page.getByLabel('3D text', { exact: true }).fill('中');
+  await expect(page.getByText('SDF text supports Latin-1 and Turkish characters only')).toBeVisible();
+  await page.getByLabel('3D text', { exact: true }).fill('İşçi A');
+  await expect.poll(() => page.evaluate(() => new Promise<string | undefined>((resolve, reject) => {
+    const request = indexedDB.open('game-engine-editor');
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const database = request.result;
+      const read = database.transaction('editor').objectStore('editor').get('current');
+      read.onerror = () => reject(read.error);
+      read.onsuccess = () => { resolve(read.result?.currentScene.objects[0]?.properties.text3d?.text); database.close(); };
+    };
+  }))).toBe('İşçi A');
+  await page.reload();
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('button', { name: 'SDF Text', exact: true }).last().click();
+  await expect(page.getByLabel('3D text', { exact: true })).toHaveValue('İşçi A');
+  for (const format of ['html', 'react', 'wordpress'] as const) {
+    await page.getByLabel('Export format').selectOption(format);
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
+    const prefix = format === 'html' ? '' : format === 'react' ? 'public/scene/' : 'three-scene-export/scene/';
+    expect(zip.file(`${prefix}vendor/SDF-TEXT-LICENSE.txt`)).not.toBeNull();
+    expect(zip.file(`${prefix}vendor/NOTO-SANS-LICENSE.txt`)).not.toBeNull();
+    const player = await context.newPage();
+    try {
+      const external: string[] = [];
+      const shaderErrors: string[] = [];
+      player.on('console', message => { if (message.type() === 'error') shaderErrors.push(message.text()); });
+      await player.route('https://**', route => {
+        external.push(route.request().url());
+        return route.abort('internetdisconnected');
+      });
+      const root = await serveExport(player, zip, testInfo.outputPath(`sdf-${format}`));
+      await player.goto(root.replace('index.html', `${prefix}index.html`));
+      await expect.poll(() => player.evaluate(() => Function('return sceneObjects[0]?.object.textRenderInfo?.glyphBounds.length || 0')() as number), { timeout: 30000 }).toBeGreaterThanOrEqual(20);
+      const pixelsChanged = await player.evaluate(() => Function(`const gl = renderer.getContext();
+        const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+        const read = () => { renderer.render(scene, camera); const pixels = new Uint8Array(w * h * 4);
+          gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels); return pixels; };
+        const text = sceneObjects[0].object; text.visible = false; const without = read();
+        text.visible = true; const withText = read(); let changed = 0;
+        for (let i = 0; i < without.length; i += 4) {
+          if (without[i] !== withText[i] || without[i + 1] !== withText[i + 1] || without[i + 2] !== withText[i + 2]) changed++;
+        } return changed;`)() as number);
+      expect(pixelsChanged).toBeGreaterThan(20);
+      await expect(player.locator('#load-error')).toBeHidden();
+      expect(external).toEqual([]);
+      expect(shaderErrors).toEqual([]);
+    } finally {
+      await player.close();
+    }
+  }
+});
+
+test('environment presets and uploaded HDR work offline in each export', async ({ page, context }, testInfo) => {
+  test.setTimeout(120000);
+  const hdr = Buffer.concat([
+    Buffer.from('#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n'),
+    Buffer.from([255, 200, 100, 128])
+  ]);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Lighting', exact: true }).click();
+  await page.getByLabel('Enable environment').check();
+  await page.getByLabel('Environment preset').selectOption('sunset');
+  await page.getByLabel('Environment background').check();
+  for (const kind of ['sunset', 'hdr'] as const) {
+    if (kind === 'hdr') {
+      await page.getByLabel('Upload HDR environment').setInputFiles({ name: 'studio.hdr', mimeType: 'application/octet-stream', buffer: hdr });
+      await expect(page.getByText('HDR environment loaded')).toBeVisible();
+      await expect(page.getByLabel('Environment preset')).toHaveValue('hdr');
+    }
+    for (const format of ['html', 'react', 'wordpress'] as const) {
+      await page.getByLabel('Export format').selectOption(format);
+      const download = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Export', exact: true }).click();
+      const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
+      const prefix = format === 'html' ? '' : format === 'react' ? 'public/scene/' : 'three-scene-export/scene/';
+      const scene = JSON.parse(await zip.file(`${prefix}scene.json`)!.async('string')) as {
+        sceneOptions: { environment: { source: string; data?: string } }
+      };
+      expect(scene.sceneOptions.environment.source).toBe(kind);
+      if (kind === 'hdr') {
+        expect(scene.sceneOptions.environment.data).toMatch(/^web3dassets\//);
+        expect(await zip.file(prefix + scene.sceneOptions.environment.data!)!.async('nodebuffer')).toEqual(hdr);
+        expect(zip.file(`${prefix}vendor/RGBELoader.js`)).not.toBeNull();
+      }
+      const player = await context.newPage();
+      try {
+        const external: string[] = [];
+        await player.route('https://**', route => {
+          external.push(route.request().url());
+          return route.abort('internetdisconnected');
+        });
+        const root = await serveExport(player, zip, testInfo.outputPath(`env-${kind}-${format}`));
+        await player.goto(root.replace('index.html', `${prefix}index.html`));
+        await expect(player.locator('canvas')).toBeVisible({ timeout: 15000 });
+        await expect.poll(() => player.evaluate(() => Function('return !!scene.environment && scene.background === scene.environment')() as boolean),
+          { timeout: 15000 }).toBe(true);
+        await expect(player.locator('#load-error')).toBeHidden();
+        expect(external).toEqual([]);
+      } finally {
+        await player.close();
+      }
+    }
+  }
 });
 
 test('linear damping persists and applies consistently in editor and export', async ({ page }, testInfo) => {
@@ -55,7 +304,7 @@ test('linear damping persists and applies consistently in editor and export', as
   await expect(page.getByLabel('Linear damping')).toHaveValue('2');
   if (process.env.E2E_PREVIEW !== '1') {
     const result = await page.evaluate(async () => {
-      const threePath = '/node_modules/.vite/deps/three.js';
+      const threePath = '/node_modules/three/build/three.module.js';
       const physicsPath = '/src/systems/PhysicsEngine.ts';
       const storePath = '/src/store/editorStore.ts';
       const THREE = await import(/* @vite-ignore */ threePath);

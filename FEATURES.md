@@ -10,10 +10,14 @@
 - Automatic scene recovery from IndexedDB and named project save/load through JSONL
 - Create, rename, open and delete scenes/pages from **Assets → Scenes / Pages**. Each scene has its own objects and options; the last scene cannot be deleted.
 - Web component actions can open another scene/page in Play and in exported projects. Revisiting a scene restarts its initial state; Stop restores the original editing scene and its transforms.
+- Scene-agent context labels objects and assets with `gameengine_type` metadata, separate from executable scripts. The agent can propose an `addscenebutton` operation by adding a web button with a valid destination scene ID; review is required before applying it.
 - Export built-in objects and attached GLB models, textures, and sounds
 
 ### 2. Object Management
 - Add primitives: Box, Sphere, Cylinder, Cone, Ground
+- Add **3D Text** (Droid Sans extruded geometry) and **SDF Text** (Troika and Noto Sans).
+  Text, size and 3D depth are editable. SDF text is limited to Latin-1 and Turkish
+  characters; unsupported characters are rejected to prevent online font fallback.
 - Add lights: Point Light, Spot Light
 - Add cameras for scene composition
 - Select a camera under Scene Options → General → Play Camera to use its initial position, rotation, field of view and clipping planes in Play and ZIP exports. Stop restores the editor view; deleting the selected camera returns to the default camera.
@@ -55,6 +59,13 @@
 - For physics interactions enable kinematic physics on the follower. Solid contacts and triggers call `collisionEnter(other)`, `collisionExit(other)`, `triggerEnter(other)` and `triggerExit(other)` on object scripts in Play and exports. Kinematic followers do not respond to gravity or forces. Disable the character controller and conflicting property animations; remove X/Z timeline channels (and Y rotation when facing the path). Scripts can override movement. Navigation uses a bounded 2D grid and AABB approximations, not a full 3D navigation or physics engine.
 
 ### 5. Animation System
+- **Tween.js** animates one selected object property: position, rotation, scale,
+  or material opacity, with duration, easing, repeat and yoyo. Opacity requires
+  a mesh or sprite material. Timeline channels take priority over the same property.
+- **Float** adds a visual bob and rotation with configurable speed, height and
+  rotation. It is inspired by Drei's Float, not the Drei component itself.
+  It cannot run on objects with physics, character control or AI navigation enabled;
+  conflicting settings are reported. Stop restores the edit state.
 - Select an imported GLB animation clip in the model's **GLB Animation Clips** properties. Enable play on start, choose looping, and set playback speed; clips also run in exported games.
 - Stopping Play restores the model's pre-play pose. One GLB clip can play per model; the scene timeline can sequence clips without overlap.
 - Rotation animations (auto-play)
@@ -85,6 +96,9 @@
 - Real-time material preview
 
 ### 7. Lighting
+- Scene Options offers locally generated studio, sunset and night environments,
+  or an uploaded HDR environment, with an optional background. These procedural
+  presets are not Drei's remote preset files. HDR data is saved with the scene.
 - Ambient light intensity control
 - Directional lighting
 - Shadow support (enable/disable)
@@ -103,7 +117,7 @@
 - Export supported scene objects to a ZIP file
 - Choose **HTML** (the original standalone ZIP), **React** (a Vite project), or **WordPress** (an installable plugin). React and WordPress host the same generated player in an iframe rather than converting scene elements into native React components or WordPress blocks. The iframe has its own scrolling and runtime state.
 - For React, extract the ZIP, run `npm install` and `npm run dev`, or run `npm run build` for deployment. For WordPress, install and activate the ZIP, then put `[three_scene]` in a page. Upload a replacement plugin to update the scene; this export supports one scene package per installation.
-- The exported player still loads Three.js and GLTFLoader from public CDNs; an internet connection and a hosting policy that permits those scripts are required. Only install or publish scene scripts and assets you trust.
+- The exported player includes Three.js and GLTFLoader locally under `vendor`, with their license. It tries public CDNs only if local loading fails; fallback requires internet access and an appropriate hosting policy. Only install or publish scene scripts and assets you trust.
 - Includes HTML player (index.html)
 - Includes complete scene.json with all data
 - Auto-generated Three.js code
@@ -112,6 +126,10 @@
 - FPS counter and controls display
 - Object scripts can define `start`, `update(delta)`, `click`, `triggerEnter(other)`, `triggerExit(other)` and `stop` handlers
 - Multi-scene ZIPs contain one HTML/JavaScript pair per scene; upload all files together. The active scene is `index.html`. Each navigation reloads the destination page and its runtime state.
+- Imported library assets and embedded scene models, textures, sounds, images and videos are files under `web3dassets` beside the scene player (inside `public/scene` for React and the plugin's `scene` folder for WordPress). The player and `scene.json` reference those files; identical embedded data is stored once. External URLs and embedded Lottie JSON are not downloaded or rewritten. Serve the HTML export over HTTP rather than opening it as a local file, so browser restrictions do not block model loading.
+- Uploaded HDR environments are also packaged in `web3dassets`. When used, Tween.js,
+  SDF dependencies, fonts and their third-party license notices are included locally
+  under `vendor`. GSAP is not included. Desktop notices are in `resources/third-party`.
 - Web styling is generated at runtime from exported scene data; a separate CSS file is not generated.
 - The 3D viewport pauses while the ZIP is being prepared and resumes when export finishes or fails
 - Export packaging code loads on demand instead of during editor startup.
@@ -134,7 +152,7 @@
 - Image planes preserve PNG alpha transparency, including after reload and export; they do not write to the depth buffer.
 - A container lays out its direct children as equal-width cells: select 1, 1/2, 1/3, 1/4 or 1/6. Without an explicit device override, at widths up to 1024px the column count is halved and rounded down; portrait phones and widths up to 480px use one column. Select a card to add multiple items inside one cell.
 - Set top, right, bottom and left margin in pixels per component. Images accept GIF and SVG; videos accept MP4 and WebM, with autoplay, mute, loop and controls options. Browser codec and autoplay policies apply.
-- Lottie accepts JSON with embedded assets, not external image files. Its player is included locally in ZIP exports; Three.js and GLTFLoader still use CDNs. Imported media is embedded in scene data, increasing project and export size.
+- Lottie accepts JSON with embedded assets, not external image files. Its player is included locally in ZIP exports. Imported media increases project and export size.
 - Select components on the web canvas; drag a component onto a container to reparent it, or onto another component to place it after that component. The Parent field can also move an item to the page root
 - Edit text, colors, spacing, CSS class, tags, and column count. Deleting a container moves its direct children to its parent
 - Web components also accept custom CSS declarations, applied only to that element; selectors, keyframes and media queries are not supported. Explicit visual controls take priority over conflicting CSS declarations; unchanged legacy fields retain the previous CSS precedence.
@@ -145,7 +163,7 @@
 - Web actions can play a selected GLB clip once or play an attached object sound. Select the target and clip or sound in the web component's properties; the same actions work in Play and ZIP exports. A new clip replaces the currently playing clip on that model.
 - In Play, non-interactive section, column, and menu backgrounds let pointer events reach the 3D canvas; use a transparent background to keep the scene visible. Mouse wheel and single-finger swipes on the canvas scroll overflowing web content
 - Optional web scripts return `{ start(), click(event), keydown(event), scroll(event), stop() }`. They receive `element`, `scene`, `camera`, `THREE`, `state`, `openScene(id)`, and `scenes` (an array of `{id, name}`). Object scripts also receive `openScene` and `scenes`. For example, `openScene(scenes.find(s => s.name === 'Scene 2 / Page 2').id)`. Use unique names when looking up by name. Scripts run only in Play and the exported player after the existing trust confirmation; a callback from a stopped scene cannot navigate.
-- Enable jQuery in Scene Options → General only when needed. It is available to 3D and web scripts in Play; exported ZIPs include a local `jquery.min.js` when enabled. Three.js and GLTFLoader in the player still require their existing CDNs
+- Enable jQuery in Scene Options → General only when needed. It is available to 3D and web scripts in Play; exported ZIPs include a local `jquery.min.js` when enabled.
 - Web components are stored with scene objects and work in Play and ZIP exports. Existing scenes without web components are unchanged
 - This is a foundational layout/event editor, not a full CSS animation-curve editor, multi-page CMS, or complete game framework
 
@@ -205,8 +223,8 @@
 - Standalone playable game
 - Responsive HTML player layout (keyboard controls)
 - Self-contained scene data
-- Requires internet access to load Three.js and GLTFLoader from CDNs
-- GLB, applied texture maps, and attached sounds are embedded in the exported scene data
+- Three.js and GLTFLoader are included locally, with CDN fallback
+- GLB, applied texture maps, and attached sounds are included as files under `web3dassets`
 - Sounds marked **Play automatically** play in play mode and the exported game; browser restrictions may require clicking **Enable sound**
 - GLB files must contain their resources; compressed formats requiring external decoders (such as Draco) are not supported
 
@@ -320,7 +338,12 @@ Options loads available models (or AnythingLLM workspace slugs) from the selecte
 provider automatically and permits manual entry and refresh if discovery fails.
 Selecting a cloud provider sends a model-list request to that provider.
 Prompts accept up to 100,000 characters, subject to the selected model's context limit.
-The default assistant generates a script for the selected object. **Scene agent
+The default assistant generates a script for the selected 3D object or web
+component, sending the target type along with the prompt. With no selection it
+generates 3D object code. Applying replaces the existing script; the current
+script can be reviewed in Options. If the selected target changes, generate
+again before applying. Stop Play before generating or applying code.
+**Scene agent
 (review changes)** instead sends scene object properties and existing scripts,
 timeline settings, active GLB clip metadata and asset metadata to the selected provider.
 It proposes replacement JavaScript, web CSS and selected visual settings for
@@ -358,9 +381,7 @@ Local requests time out after three minutes.
 Run `npx playwright install chromium` once, then `npm test` to run the JSONL
 integration tests and browser end-to-end tests. Run `npm run test:integration`
 or `npm run test:e2e` to run either suite separately. Browser tests use an
-isolated temporary project file and do not modify your saved projects. The
-exported-player tests load the same external CDNs as exported games,
-so it requires network access.
+isolated temporary project file and do not modify your saved projects.
 
 The exported game uses the same basic physics and character movement as play
 mode. Physics uses simple bounding boxes and an infinite ground plane; it is

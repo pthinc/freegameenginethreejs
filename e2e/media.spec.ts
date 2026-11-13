@@ -2,9 +2,8 @@ import { test, expect } from '@playwright/test';
 import JSZip from 'jszip';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { build, createServer } from 'vite';
-import { addObject } from './helpers';
+import { addObject, serveExport } from './helpers';
 
 function triangleGlb(animated = false) {
   const positions = Buffer.alloc(36);
@@ -59,6 +58,105 @@ const texture = {
 };
 const sound = { name: 'tone.wav', mimeType: 'audio/wav', buffer: silentWav() };
 
+test('all export formats package library and multi-scene media as files and load them over HTTP', async ({ page, context }, testInfo) => {
+  test.setTimeout(120000);
+  const unused = { name: 'unused.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>') };
+  const duplicateName = { ...unused, buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>') };
+  await page.goto('/');
+  await page.getByLabel('Upload assets').setInputFiles([model, texture, sound, unused, duplicateName]);
+  await expect(page.getByRole('button', { name: 'Add unused.svg to scene' })).toHaveCount(2);
+  await page.getByRole('button', { name: 'Add triangle.glb to scene' }).click();
+  await page.getByRole('button', { name: 'Material', exact: true }).click();
+  await page.getByLabel('Diffuse Map').setInputFiles(texture);
+  await page.getByRole('button', { name: 'Sounds', exact: true }).click();
+  await page.locator('#sound-upload').setInputFiles(sound);
+  await page.getByRole('button', { name: 'Create scene' }).click();
+  await page.getByRole('button', { name: 'Add web image' }).click();
+  await page.getByLabel('Web image', { exact: true }).setInputFiles(texture);
+  await page.getByRole('button', { name: 'Add web audio' }).click();
+  await page.getByLabel('Web audio', { exact: true }).setInputFiles(sound);
+
+  for (const format of ['html', 'react', 'wordpress'] as const) {
+    await page.getByLabel('Export format').selectOption(format);
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
+    const prefix = format === 'html' ? '' : format === 'react' ? 'public/scene/' : 'three-scene-export/scene/';
+    const scene = JSON.parse(await zip.file(`${prefix}scene.json`)!.async('string')) as {
+      assets: { name: string; url: string }[];
+      objects: { properties: { web?: { image?: string; audio?: string } } }[];
+      otherScenes: { objects: { properties: { modelData?: string; map?: string; sounds?: { url: string }[] } }[] }[];
+    };
+    const byName = (name: string) => scene.assets.find(asset => asset.name === name)!.url;
+    for (const item of [model, texture, sound, unused]) {
+      const path = byName(item.name);
+      expect(path).toMatch(/^web3dassets\//);
+      expect(await zip.file(prefix + path)!.async('nodebuffer')).toEqual(item.buffer);
+    }
+    const duplicates = scene.assets.filter(asset => asset.name === unused.name);
+    expect(duplicates).toHaveLength(2);
+    expect(duplicates[0].url).not.toBe(duplicates[1].url);
+    expect(await zip.file(prefix + duplicates[1].url)!.async('nodebuffer')).toEqual(duplicateName.buffer);
+    const imported = scene.otherScenes[0].objects[0].properties;
+    expect(imported.modelData).toBe(byName(model.name));
+    expect(imported.map).toBe(byName(texture.name));
+    expect(imported.sounds![0].url).toBe(byName(sound.name));
+    expect(scene.objects[0].properties.web!.image).toBe(byName(texture.name));
+    expect(scene.objects[1].properties.web!.audio).toBe(byName(sound.name));
+    expect(await zip.file(`${prefix}scene.js`)!.async('string')).not.toContain('data:image/png;base64,');
+    const root = testInfo.outputPath(`asset-${format}`);
+    await Promise.all(Object.values(zip.files).filter(file => !file.dir).map(async file => {
+      const path = join(root, file.name);
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, await file.async('nodebuffer'));
+    }));
+    const server = await createServer({
+      configFile: false, root: format === 'react' ? root : format === 'wordpress' ? join(root, 'three-scene-export') : root,
+      logLevel: 'silent', server: { host: '127.0.0.1', port: 0 }
+    });
+    const player = await context.newPage();
+    try {
+      const externalRequests: string[] = [];
+      await player.route('https://**', route => {
+        externalRequests.push(route.request().url());
+        return route.abort('internetdisconnected');
+      });
+      await server.listen();
+      const address = server.httpServer!.address();
+      if (!address || typeof address === 'string') throw new Error('Export test server failed to start');
+      const base = `http://127.0.0.1:${address.port}/`;
+      await player.goto(base + (format === 'wordpress' ? 'scene/index.html' : ''));
+      const frame = format === 'react' ? player.frameLocator('iframe[title="3D scene"]') : player;
+      const image = frame.locator('.engine-web-node[data-kind="image"]');
+      await expect(image).toHaveAttribute('src', byName(texture.name), { timeout: 15000 });
+      await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1);
+      const audio = frame.locator('.engine-web-node[data-kind="audio"]');
+      await expect(audio).toHaveAttribute('src', byName(sound.name));
+      await expect.poll(() => audio.evaluate((element: HTMLAudioElement) => element.readyState)).toBeGreaterThan(0);
+      const modelPage = await context.newPage();
+      try {
+        await modelPage.route('https://**', route => {
+          externalRequests.push(route.request().url());
+          return route.abort('internetdisconnected');
+        });
+        await modelPage.goto(base + (format === 'html' ? '' : 'scene/') + 'scene-1.html');
+        await expect.poll(() => modelPage.evaluate(() => Function('return sceneObjects.length')() as number), { timeout: 15000 }).toBe(1);
+        await expect(modelPage.locator('#load-error')).toBeHidden();
+        const rendered = await modelPage.evaluate(() => Function(`let mesh;
+          sceneObjects[0].object.traverse(child => { if (child.isMesh) mesh = child; });
+          return { vertices: mesh.geometry.attributes.position.count, textureWidth: mesh.material.map.image.width };`)() as { vertices: number; textureWidth: number });
+        expect(rendered).toEqual({ vertices: 3, textureWidth: 1 });
+        expect(externalRequests).toEqual([]);
+      } finally {
+        await modelPage.close();
+      }
+    } finally {
+      await player.close();
+      await server.close();
+    }
+  }
+});
+
 test('transparent image planes leave the 3D scene visible in play and export', async ({ page }, testInfo) => {
   await page.goto('/');
   await addObject(page, 'Box');
@@ -108,12 +206,8 @@ test('transparent image planes leave the 3D scene visible in play and export', a
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('transparent-plane');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
   page.once('dialog', dialog => dialog.accept());
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await expect(page.getByRole('button', { name: 'Toggle image' })).toBeVisible();
   await compareCanvas();
   await expect(page.locator('#load-error')).toBeHidden();
@@ -229,14 +323,10 @@ test('scene agent adds GLB, image, audio and video assets to an empty scene', as
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('agent-media');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
-  await expect(page.locator('.engine-web-node[data-kind="image"]')).toHaveAttribute('src', /^data:image\/png/, { timeout: 15000 });
-  await expect(page.locator('.engine-web-node[data-kind="audio"]')).toHaveAttribute('src', /^data:audio\/wav/);
-  await expect(page.locator('.engine-web-node[data-kind="video"]')).toHaveAttribute('src', /^data:video\/webm/);
+  await page.goto(await serveExport(page, zip, directory));
+  await expect(page.locator('.engine-web-node[data-kind="image"]')).toHaveAttribute('src', /^web3dassets\/.*\.png$/, { timeout: 15000 });
+  await expect(page.locator('.engine-web-node[data-kind="audio"]')).toHaveAttribute('src', /^web3dassets\/.*\.wav$/);
+  await expect(page.locator('.engine-web-node[data-kind="video"]')).toHaveAttribute('src', /^web3dassets\/.*\.webm$/);
   await expect(page.locator('#load-error')).toBeHidden();
 });
 
@@ -276,11 +366,7 @@ test('a button-started GLB clip opens a scene when it finishes', async ({ page }
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('glb-transition');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json', 'scene-1.html', 'scene-1.js']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await page.getByRole('button', { name: 'Start clip' }).click({ timeout: 15000 });
   await expect(page.getByRole('heading', { name: 'GLB finished' })).toBeVisible({ timeout: 15000 });
 });
@@ -356,13 +442,9 @@ test('asset library imports and adds models, images, audio and video and restore
   };
   expect(snapshot.objects.find(object => object.type === 'imagePlane')?.properties.scale[0]).toBe(3);
   const directory = testInfo.outputPath('asset-export');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await expect(page.locator('.engine-web-node[data-kind="image"]')).toHaveCSS('width', '120px', { timeout: 15000 });
-  await expect(page.locator('.engine-web-node[data-kind="audio"]')).toHaveAttribute('src', /^data:audio\/wav/);
+  await expect(page.locator('.engine-web-node[data-kind="audio"]')).toHaveAttribute('src', /^web3dassets\/.*\.wav$/);
   await expect(page.locator('.engine-web-node[data-kind="video"]')).toHaveCSS('width', '160px');
   await expect(page.locator('#load-error')).toBeHidden();
 });
@@ -411,12 +493,8 @@ test('web buttons play a selected model clip and sound in editor and export', as
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('button-media');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
   page.once('dialog', dialog => dialog.accept());
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await expect(page.getByRole('button', { name: 'Animate', exact: true })).toBeVisible({ timeout: 15000 });
   await expect.poll(position).toBe(0);
   await page.getByRole('button', { name: 'Animate', exact: true }).click();
@@ -467,12 +545,8 @@ test('GLB animation clips persist and play in the editor and export', async ({ p
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('animated-model');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
   page.once('dialog', dialog => dialog.accept());
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await expect.poll(position, { timeout: 15000 }).toBeGreaterThan(0.7);
   await expect(page.locator('#load-error')).toBeHidden();
 });
@@ -524,16 +598,12 @@ test('GLB, texture and sound survive project and browser reload and run in the d
   expect(downloadPath).not.toBeNull();
   const zip = await JSZip.loadAsync(await readFile(downloadPath!));
   const snapshot = JSON.parse(await zip.file('scene.json')!.async('string'));
-  expect(snapshot.objects[0].properties.modelData).toMatch(/^data:/);
-  expect(snapshot.objects[0].properties.map).toMatch(/^data:image\/png/);
+  expect(snapshot.objects[0].properties.modelData).toMatch(/^web3dassets\/.*\.glb$/);
+  expect(snapshot.objects[0].properties.map).toMatch(/^web3dassets\/.*\.png$/);
   expect(snapshot.objects[0].properties.materialType).toBe('standard');
-  expect(snapshot.objects[0].properties.sounds[0].url).toMatch(/^data:audio\/wav/);
+  expect(snapshot.objects[0].properties.sounds[0].url).toMatch(/^web3dassets\/.*\.wav$/);
   const directory = testInfo.outputPath('media-game');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
   await expect(page.locator('#load-error')).toBeHidden();
   await expect.poll(() => page.evaluate(() => Function('return sceneObjects.length')() as number), { timeout: 15000 }).toBe(1);
   const rendered = await page.evaluate(() => Function(`const root = sceneObjects[0].object;

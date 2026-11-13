@@ -2,13 +2,14 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { SceneObject, Asset, Component } from '../types/editor';
 import * as THREE from 'three';
-import { applyMaterialProperties, restoreSceneObject } from '../services/sceneObjects';
+import { applyMaterialProperties, createTextGeometry, isSupportedSdfText, restoreSceneObject } from '../services/sceneObjects';
 import { writeEditor, type StoredNamedScene, type StoredScene } from '../services/sceneStorage';
 import { toast } from 'react-hot-toast';
 import { isWebContainer, isValidWebParent } from '../types/web';
 import type { SceneEdit } from '../services/sceneAgent';
 import type { SceneTimeline, TimelineDevice, TimelineTrack } from '../types/timeline';
 import type { SceneAIConfig } from '../systems/SceneAI';
+import { Text } from 'troika-three-text';
 import { recordHistory } from '../services/editorHistory';
 
 export interface SceneOptions {
@@ -22,6 +23,13 @@ export interface SceneOptions {
   gravity: number;
   enableJQuery?: boolean;
   activeCameraId?: string;
+  environment?: {
+    enabled: boolean;
+    source: 'studio' | 'sunset' | 'night' | 'hdr';
+    background: boolean;
+    data?: string;
+    name?: string;
+  };
   timeline?: SceneTimeline;
   ai?: SceneAIConfig;
 }
@@ -247,6 +255,28 @@ export const useEditorStore = create<EditorState>()(
           if (!objectToUpdate) return state;
 
           const updatedProperties = { ...objectToUpdate.properties, ...properties };
+          if (properties.text3d && objectToUpdate.type === 'text3d' && objectToUpdate.object instanceof THREE.Mesh) {
+            try {
+              const geometry = createTextGeometry(properties.text3d);
+              objectToUpdate.object.geometry.dispose();
+              objectToUpdate.object.geometry = geometry;
+            } catch (error) {
+              console.error('Failed to update 3D text:', error);
+              toast.error(error instanceof Error ? error.message : 'Failed to update 3D text');
+              return state;
+            }
+          }
+          if (properties.text3d && objectToUpdate.type === 'textSdf' && objectToUpdate.object instanceof Text) {
+            const text = properties.text3d;
+            if (typeof text.text !== 'string' || text.text.length > 200 || !isSupportedSdfText(text.text) ||
+                !Number.isFinite(text.size) || text.size <= 0 || text.size > 100) {
+              toast.error('SDF text supports Latin-1 and Turkish characters only');
+              return state;
+            }
+            objectToUpdate.object.text = text.text;
+            objectToUpdate.object.fontSize = text.size;
+            objectToUpdate.object.sync();
+          }
           if (properties.className !== undefined) objectToUpdate.object.userData.className = properties.className;
           if (properties.tags !== undefined) objectToUpdate.object.userData.tags = properties.tags;
 

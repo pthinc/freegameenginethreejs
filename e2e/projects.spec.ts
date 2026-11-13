@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { addObject, enablePlayer } from './helpers';
+import { addObject, enablePlayer, extractExport, serveExport } from './helpers';
 import JSZip from 'jszip';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Page, TestInfo } from '@playwright/test';
@@ -18,10 +18,7 @@ async function openExport(page: Page, testInfo: TestInfo, directoryName: string,
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath(directoryName);
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json', 'scene-1.html', 'scene-1.js']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   if (hasScripts) page.once('dialog', dialog => dialog.accept());
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
 }
@@ -140,10 +137,7 @@ test('scene buttons navigate in Play and an exported multi-page project', async 
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('multi-page');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json', 'scene-1.html', 'scene-1.js']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await expect(page.getByRole('button', { name: 'Go to second' })).toBeVisible({ timeout: 15000 });
   await page.getByRole('button', { name: 'Go to second' }).click();
@@ -152,6 +146,52 @@ test('scene buttons navigate in Play and an exported multi-page project', async 
   await page.getByRole('button', { name: 'Return to first' }).click();
   await expect(page.getByRole('button', { name: 'Go to second' })).toBeVisible({ timeout: 15000 });
   await expect(page.locator('#load-error')).toBeHidden();
+});
+
+test('scene agent identifies types and creates a reviewed scene button', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await setupDestination(page);
+  await addObject(page, 'Box');
+  await page.getByRole('button', { name: 'Add web heading' }).click();
+  let invalid = true;
+  await page.route('**/api/ai/generate', async route => {
+    const body = route.request().postDataJSON() as { context: {
+      activeSceneId: string;
+      objects: { type: string; gameengine_type: string }[];
+      scenes: { id: string; name: string; objects?: { gameengine_type: string }[] }[];
+      gameengine_actions: Record<string, string>;
+    } };
+    expect(body.context.objects.find(item => item.type === 'box')?.gameengine_type).toBe('box');
+    expect(body.context.objects.find(item => item.type === 'web')?.gameengine_type).toBe('heading');
+    expect(body.context.gameengine_actions.addscenebutton).toContain('sceneId');
+    const destination = body.context.scenes.find(scene => scene.id !== body.context.activeSceneId)!;
+    expect(destination.objects?.[0].gameengine_type).toBe('heading');
+    await route.fulfill({ json: { code: JSON.stringify({ summary: 'Add a page button', additions: [{
+      kind: 'web', type: 'button', name: 'Page button', parentId: null, text: 'Open destination',
+      sceneId: invalid ? 'unknown-scene' : destination.id
+    }] }) } });
+  });
+  await page.getByRole('button', { name: 'Options', exact: true }).click();
+  await page.getByLabel('Assistant mode').selectOption('scene');
+  await page.getByLabel('AI prompt').fill('Add a button to the second scene');
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Generate code' }).click();
+  await expect(page.getByText('Page button: invalid destination scene for button.')).toBeVisible();
+  invalid = false;
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Generate code' }).click();
+  await expect(page.getByRole('region', { name: 'Scene change proposal' })).toContainText('Destination: Scene 2 / Page 2');
+  await page.getByRole('button', { name: 'Apply reviewed changes' }).click();
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await page.getByRole('button', { name: 'Open destination' }).click();
+  await expect(page.getByRole('heading', { name: 'Destination reached' })).toBeVisible();
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
+  await page.goto(await serveExport(page, zip, testInfo.outputPath('agent-scene-button')));
+  await page.getByRole('button', { name: 'Open destination' }).click();
+  await expect(page.getByRole('heading', { name: 'Destination reached' })).toBeVisible();
 });
 
 test('multiple scenes retain independent objects through save, reopen and deletion', async ({ page, request }) => {
@@ -256,10 +296,7 @@ test('renaming scenes persists and deleted scene links report an error', async (
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('missing-scene');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
+  await extractExport(zip, directory);
   await page.goto(pathToFileURL(join(directory, 'index.html')).href);
   await page.getByRole('button', { name: 'Open destination' }).click({ timeout: 15000 });
   await expect(page.locator('#load-error')).toHaveText('Target scene no longer exists');

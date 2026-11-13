@@ -1,4 +1,28 @@
 import { expect, type Page } from '@playwright/test';
+import type JSZip from 'jszip';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { createServer } from 'vite';
+
+export async function extractExport(zip: JSZip, directory: string) {
+  await Promise.all(Object.values(zip.files).filter(file => !file.dir).map(async file => {
+    const path = join(directory, file.name);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, await file.async('nodebuffer'));
+  }));
+}
+
+export async function serveExport(page: Page, zip: JSZip, directory: string) {
+  await extractExport(zip, directory);
+  const server = await createServer({
+    configFile: false, root: directory, logLevel: 'silent', server: { host: '127.0.0.1', port: 0 }
+  });
+  await server.listen();
+  page.once('close', () => { void server.close(); });
+  const address = server.httpServer!.address();
+  if (!address || typeof address === 'string') throw new Error('Export test server failed to start');
+  return `http://127.0.0.1:${address.port}/index.html`;
+}
 
 export async function addObject(page: Page, name: string) {
   await page.getByText(name, { exact: true }).first().locator('..').getByRole('button', { name: 'Add' }).click();

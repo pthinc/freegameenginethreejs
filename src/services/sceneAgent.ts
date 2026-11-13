@@ -31,7 +31,7 @@ type PrimitiveType = typeof primitiveTypes[number];
 type AdditionBase = { name: string; position?: [number, number, number]; javascript?: string };
 export type SceneAddition =
   | (AdditionBase & { kind: 'primitive'; type: PrimitiveType })
-  | (AdditionBase & { kind: 'web'; type: WebElementKind; parentId: string | null; text?: string; css?: string })
+  | (AdditionBase & { kind: 'web'; type: WebElementKind; parentId: string | null; text?: string; css?: string; sceneId?: string })
   | (AdditionBase & { kind: 'asset'; assetId: string; usage: '3d' | 'web'; parentId: string | null; css?: string });
 
 function withoutMedia(value: unknown): unknown {
@@ -48,21 +48,30 @@ export function sceneAgentContext(
   objects: SceneObject[], assets: Asset[], scenes: StoredNamedScene[],
   activeSceneId: string, sceneOptions: SceneOptions, selectedId?: string
 ) {
+  const describeObject = (item: Pick<SceneObject, 'id' | 'name' | 'type' | 'properties'>) => ({
+    id: item.id, name: item.name, type: item.type,
+    gameengine_type: item.properties.web?.kind ?? item.type,
+    properties: withoutMedia(item.properties)
+  });
   return {
     activeSceneId, sceneName: sceneOptions.name, selectedId: selectedId ?? null,
+    gameengine_actions: {
+      addscenebutton: 'Add a web button with sceneId set to an existing destination scene id.'
+    },
     timeline: withoutMedia(sceneOptions.timeline ?? { duration: 5, trigger: 'start', key: '', tracks: [] }),
     scenes: scenes.map(scene => ({ id: scene.id, name: scene.id === activeSceneId ? sceneOptions.name : scene.sceneOptions.name,
       ...(scene.id !== activeSceneId ? { timeline: withoutMedia(scene.sceneOptions.timeline),
-        objects: scene.objects.map(item => ({ id: item.id, name: item.name, type: item.type, properties: withoutMedia(item.properties) })) } : {}) })),
-    assets: assets.map(({ id, name, type, metadata }) => ({ id, name, type, metadata })),
-    objects: objects.map(({ id, name, type, properties, object }) => ({
-      id, name, type, properties: withoutMedia(properties),
-      clips: type === 'model' ? object.animations.map((clip, index) => ({ index, name: clip.name, duration: clip.duration })) : undefined
+        objects: scene.objects.map(describeObject) } : {}) })),
+    assets: assets.map(({ id, name, type, metadata }) => ({ id, name, type, gameengine_type: `asset:${type}`, metadata })),
+    objects: objects.map(item => ({
+      ...describeObject(item),
+      clips: item.type === 'model' ? item.object.animations.map((clip, index) => ({ index, name: clip.name, duration: clip.duration })) : undefined
     }))
   };
 }
 
-export function parseSceneProposal(text: string, objects: SceneObject[], assets: Asset[] = [], timeline?: SceneTimeline): SceneProposal {
+export function parseSceneProposal(text: string, objects: SceneObject[], assets: Asset[] = [], timeline?: SceneTimeline,
+  scenes: StoredNamedScene[] = [], activeSceneId?: string): SceneProposal {
   const parsed: unknown = JSON.parse(text);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Assistant response must be a JSON object.');
   const proposal = parsed as Record<string, unknown>;
@@ -112,7 +121,7 @@ export function parseSceneProposal(text: string, objects: SceneObject[], assets:
     if (!['primitive', 'web', 'asset'].includes(String(item.kind)) ||
         typeof item.name !== 'string' || !item.name.trim() || item.name.length > 100) throw new Error('Each addition requires a valid kind and name.');
     const allowed = item.kind === 'primitive' ? ['kind', 'name', 'type', 'position', 'javascript'] :
-      item.kind === 'web' ? ['kind', 'name', 'type', 'parentId', 'text', 'javascript', 'css'] :
+      item.kind === 'web' ? ['kind', 'name', 'type', 'parentId', 'text', 'javascript', 'css', 'sceneId'] :
         ['kind', 'name', 'assetId', 'usage', 'parentId', 'position', 'javascript', 'css'];
     if (Object.keys(item).some(key => !allowed.includes(key))) throw new Error(`${item.name}: unsupported addition field.`);
     let position: [number, number, number] | undefined;
@@ -134,6 +143,10 @@ export function parseSceneProposal(text: string, objects: SceneObject[], assets:
     if (item.kind === 'web') {
       if (!webTypes.some(type => type === item.type)) throw new Error(`${item.name}: unsupported web component type.`);
       if (item.text !== undefined && (typeof item.text !== 'string' || item.text.length > 10000)) throw new Error(`${item.name}: invalid web text.`);
+      if (item.sceneId !== undefined && (item.type !== 'button' || typeof item.sceneId !== 'string' ||
+          item.sceneId === activeSceneId || !scenes.some(scene => scene.id === item.sceneId))) {
+        throw new Error(`${item.name}: invalid destination scene for button.`);
+      }
       webKind = item.type as WebElementKind;
     } else {
       const asset = assets.find(asset => asset.id === item.assetId);
@@ -154,7 +167,8 @@ export function parseSceneProposal(text: string, objects: SceneObject[], assets:
       }
     }
     validateCode(item.name, isWeb, javascript, css);
-    if (item.kind === 'web') return { kind: 'web', type: webKind, name: item.name, parentId, text: item.text as string | undefined, javascript, css };
+    if (item.kind === 'web') return { kind: 'web', type: webKind, name: item.name, parentId, text: item.text as string | undefined,
+      sceneId: item.sceneId as string | undefined, javascript, css };
     return { kind: 'asset', name: item.name, assetId: item.assetId as string, usage: item.usage as '3d' | 'web', parentId, position, javascript, css };
   });
   const properties = ['position.x', 'position.y', 'position.z', 'rotation.x', 'rotation.y', 'rotation.z',
@@ -258,6 +272,10 @@ async function prepareSceneAddition(addition: SceneAddition, assets: Asset[]): P
   else if (isWeb && asset) webKind = asset.type === '2d' ? 'image' : asset.type === 'audio' ? 'audio' : 'video';
   const web = webKind && addition.kind !== 'primitive' ? newWebElement(webKind, addition.parentId) : undefined;
   if (web && addition.kind === 'web' && addition.text !== undefined) web.text = addition.text;
+  if (web && addition.kind === 'web' && addition.sceneId) {
+    web.action = 'scene';
+    web.targetId = addition.sceneId;
+  }
   if (web && asset) {
     web.text = addition.name;
     if (asset.type === '2d') web.image = asset.url;

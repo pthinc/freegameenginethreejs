@@ -18,6 +18,7 @@ export function Options({ onClose }: { onClose: () => void }) {
   const [modelRefresh, setModelRefresh] = useState(0);
   const [prompt, setPrompt] = useState('');
   const [code, setCode] = useState('');
+  const [codeTarget, setCodeTarget] = useState<{ kind: 'object' | 'web'; id?: string }>();
   const [loading, setLoading] = useState(false);
   const [agentStage, setAgentStage] = useState('');
   const [thinking, setThinking] = useState(true);
@@ -92,14 +93,17 @@ export function Options({ onClose }: { onClose: () => void }) {
       return;
     }
     const snapshot = useEditorStore.getState();
-    if (mode === 'scene' && snapshot.isPlaying) { toast.error('Stop Play before using the scene agent.'); return; }
+    if (snapshot.isPlaying) { toast.error('Stop Play before using the code assistant.'); return; }
+    const targetKind = snapshot.selectedObject?.properties.web ? 'web' : 'object';
     const disclosure = mode === 'scene'
       ? ` Scene names, object properties and scripts across scenes, timeline settings, asset metadata${screenshot ? ', and the captured screenshot' : ''} will be sent.`
-      : ' The prompt will be sent.';
+      : ` The prompt and target type (${targetKind === 'web' ? 'web component' : '3D object'}) will be sent.`;
     if (!window.confirm(`Send to ${provider === 'ollama' ? 'the configured local Ollama server' : provider}?${disclosure}`)) return;
     setLoading(true);
     setAgentStage('Sending context to the selected provider and waiting for its response...');
     setProposal(undefined);
+    setCode('');
+    setCodeTarget(undefined);
     try {
       const response = await fetch('/api/ai/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -108,15 +112,20 @@ export function Options({ onClose }: { onClose: () => void }) {
             mode: 'scene-agent', screenshot,
             context: sceneAgentContext(snapshot.sceneObjects, snapshot.assets, snapshot.scenes, snapshot.activeSceneId,
               snapshot.sceneOptions, snapshot.selectedObject?.id)
-          } : {}) })
+          } : { targetKind }) })
       });
       const data: { code?: string; error?: string } = await response.json();
       if (!response.ok || !data.code) throw new Error(data.error || 'No code returned');
       if (mode === 'scene') {
-        setProposal({ value: parseSceneProposal(data.code, snapshot.sceneObjects, snapshot.assets, snapshot.sceneOptions.timeline), snapshot });
+        setProposal({ value: parseSceneProposal(data.code, snapshot.sceneObjects, snapshot.assets, snapshot.sceneOptions.timeline,
+          snapshot.scenes, snapshot.activeSceneId), snapshot });
         setAgentStage('Proposal validated. Review the changes before applying.');
       }
-      else { setCode(data.code); setAgentStage('Code received. Review it before applying.'); }
+      else {
+        setCode(data.code);
+        setCodeTarget({ kind: targetKind, id: snapshot.selectedObject?.id });
+        setAgentStage('Code received. Review it before applying.');
+      }
     } catch (error) {
       setAgentStage('Generation failed; no changes were applied.');
       console.error('Code generation failed:', error);
@@ -162,6 +171,7 @@ export function Options({ onClose }: { onClose: () => void }) {
           <label className="block">Assistant mode
             <select aria-label="Assistant mode" disabled={loading || applying} value={mode} onChange={event => {
               setMode(event.target.value as 'single' | 'scene'); setProposal(undefined);
+              setCode(''); setCodeTarget(undefined); setAgentStage('');
             }} className="block w-full bg-gray-700 p-2 rounded">
               <option value="single">Selected object code</option>
               <option value="scene">Scene agent (review changes)</option>
@@ -209,6 +219,10 @@ export function Options({ onClose }: { onClose: () => void }) {
               <button type="button" disabled={loading || applying} onClick={() => setScreenshot(undefined)} className="text-sm text-red-300">Remove screenshot</button>
             </div>}
           </>}
+          {mode === 'single' && <p className="text-xs text-gray-300">
+            Target: {selectedObject ? `${selectedObject.name} (${selectedObject.properties.web ? 'web component' : '3D object'})` : 'no object selected; 3D object code will be generated'}.
+            Applying replaces the selected object's existing script.
+          </p>}
           <label className="block">Prompt
             <textarea aria-label="AI prompt" disabled={loading || applying} rows={10} maxLength={100000} value={prompt} onChange={event => setPrompt(event.target.value)} className="block w-full resize-y bg-gray-700 p-2 rounded" />
             <span className="text-xs text-gray-400">{prompt.length} / 100000 characters</span>
@@ -216,20 +230,30 @@ export function Options({ onClose }: { onClose: () => void }) {
           <button disabled={loading || applying} onClick={() => void generate()} className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50">{loading ? 'Generating...' : 'Generate code'}</button>
           {agentStage && <p role="status" className="text-sm text-gray-300">{agentStage}</p>}
           {mode === 'single' && code && <>
+            {selectedObject && <details className="text-xs text-gray-300"><summary>Current script</summary>
+              <pre className="whitespace-pre-wrap break-all">{selectedObject.properties.web?.script ?? selectedObject.properties.script ?? '(empty)'}</pre>
+            </details>}
             <label className="block">Generated code
               <textarea aria-label="Generated code" rows={10} value={code} onChange={event => setCode(event.target.value)} className="block w-full bg-gray-900 font-mono p-2 rounded" />
             </label>
-            <button disabled={!selectedObject} onClick={() => {
-              if (!selectedObject) return;
+            <button disabled={!selectedObject || loading || applying} onClick={() => {
+              const current = useEditorStore.getState();
+              const target = current.selectedObject;
+              if (!target || !codeTarget) return;
+              if (current.isPlaying) { toast.error('Stop Play before applying code.'); return; }
+              if ((target.properties.web ? 'web' : 'object') !== codeTarget.kind || (codeTarget.id && codeTarget.id !== target.id)) {
+                toast.error('The selected target changed. Generate code again for the selected object.');
+                return;
+              }
               try {
-                new Function(selectedObject.properties.web ? 'element' : 'object', 'scene', 'camera', 'THREE', 'state', 'openScene', 'scenes', code);
+                new Function(target.properties.web ? 'element' : 'object', 'scene', 'camera', 'THREE', 'state', 'openScene', 'scenes', code);
               } catch (error) {
                 toast.error(`Invalid JavaScript: ${error instanceof Error ? error.message : String(error)}`);
                 return;
               }
-              useEditorStore.getState().updateObjectProperties(selectedObject.id, selectedObject.properties.web
-                ? { web: { ...selectedObject.properties.web, script: code } } : { script: code });
-              toast.success(`Applied code to ${selectedObject.name}`);
+              current.updateObjectProperties(target.id, target.properties.web
+                ? { web: { ...target.properties.web, script: code } } : { script: code });
+              toast.success(`Applied code to ${target.name}`);
               onClose();
             }} className="bg-green-700 px-4 py-2 rounded disabled:opacity-50">Apply to selected object</button>
           </>}
@@ -250,6 +274,9 @@ export function Options({ onClose }: { onClose: () => void }) {
                   ? ` to ${proposal.snapshot.sceneObjects.find(object => object.id === addition.parentId)?.name}` : ''}</p>
               {addition.kind !== 'web' && addition.position && <p className="text-xs">Position: {addition.position.join(', ')}</p>}
               {addition.kind === 'web' && addition.text !== undefined && <p className="text-xs">Text: {addition.text}</p>}
+              {addition.kind === 'web' && addition.sceneId && <p className="text-xs">
+                Destination: {proposal.snapshot.scenes.find(scene => scene.id === addition.sceneId)?.sceneOptions.name}
+              </p>}
               {addition.javascript !== undefined && <label className="block text-xs">JavaScript
                 <textarea readOnly value={addition.javascript} rows={4} className="block w-full bg-gray-900 font-mono p-2" />
               </label>}

@@ -103,21 +103,42 @@ Metin alanı dışında Ctrl+Z ve Ctrl+Shift+Z / Ctrl+Y kısayolları da çalı�
 Özel kamera kullanmak için bir **Camera** ekleyip **Scene Options → General →
 Play Camera** altında seçin.
 
+Nesneyi seçerek özelliklerinde **Tween.js** ile konum, dönüş, ölçek veya
+opaklık animasyonu; **Float** ile görsel salınım ayarlayabilirsiniz. Float,
+fizik, karakter kontrolü veya AI Navigation etkin nesnelerde çalışmaz ve çakışma
+bildirilir. Timeline aynı özelliği kontrol ediyorsa önceliklidir.
+
+**Components** bölümünden **3D Text** veya **SDF Text** ekleyip metin ve boyutu
+düzenleyin. SDF yalnızca Latin-1 ve Türkçe karakterleri destekler. **Scene
+Options** içinden studio, sunset, night ortamını veya bir HDR dosyasını seçin;
+isterseniz arka plan olarak da kullanın. Hazır ortamlar yerel olarak üretilir.
+
 ## Dışa aktarma
 
 Üst çubuktan **HTML**, **React** veya **WordPress** seçin ve **Export** düğmesine
 basın. Masaüstü sürümünde açılan pencerede ZIP'in kaydedileceği konumu seçin.
 İndirilen ZIP'in tüm dosyalarını birlikte kullanın.
 
-- **HTML:** ZIP'i çıkarıp `index.html` dosyasını açın veya içeriği bir web
-  sunucusuna yükleyin. Çok sahneli projede bütün sayfa ve JS dosyaları gerekir.
+- **HTML:** ZIP'i çıkarıp içeriğin tamamını bir web sunucusunda yayınlayın.
+  `index.html` dosyasını doğrudan açmak, tarayıcının yerel dosya kısıtlamaları
+  nedeniyle modellerin yüklenmesini engelleyebilir. Çok sahneli projede bütün
+  sayfa ve JS dosyaları gerekir.
 - **React:** ZIP'i çıkarın; klasörde `npm install` ve `npm run dev` çalıştırın.
 - **WordPress:** ZIP'i eklenti olarak kurup etkinleştirin ve sayfaya
   `[three_scene]` ekleyin.
 
 React ve WordPress çıktıları üretilen oynatıcıyı iframe içinde barındırır;
 yerel React bileşenlerine veya WordPress bloklarına dönüştürmez. Oynatıcı
-Three.js ve GLTFLoader için genel CDN'lere erişim gerektirir.
+Three.js ve GLTFLoader yerel dosyalar olarak pakete dahildir; yerel yükleme
+başarısız olursa internet bağlantısı ve uygun sunucu politikasıyla CDN denenir. İçe aktarılan
+GLB, resim, ses ve video dosyaları sahne oynatıcısının yanındaki
+`web3dassets` klasöründedir; bu klasörü diğer çıktı dosyalarıyla birlikte
+taşıyın. Harici bağlantılar ve Lottie içindeki gömülü veriler ayrı dosyalara
+dönüştürülmez.
+
+Kullanılan Tween.js, metin ve fontların lisansları ilgili ZIP'in `vendor`
+klasöründedir. Masaüstü paketindeki bildirimler kurulum dizininde
+`resources\third-party` altındadır. GSAP pakete dahil değildir.
 
 ## AI ve güvenlik
 

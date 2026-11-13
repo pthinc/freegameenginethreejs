@@ -1,9 +1,7 @@
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import JSZip from 'jszip';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { addObject } from './helpers';
+import { readFile } from 'node:fs/promises';
+import { addObject, serveExport } from './helpers';
 
 function twoClipGlb() {
   const positions = Buffer.alloc(36);
@@ -55,12 +53,8 @@ async function openExport(page: Page, testInfo: TestInfo) {
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   const zip = await JSZip.loadAsync(await readFile((await (await download).path())!));
   const directory = testInfo.outputPath('timeline-export');
-  await mkdir(directory, { recursive: true });
-  for (const name of ['index.html', 'scene.js', 'scene.json']) {
-    await writeFile(join(directory, name), await zip.file(name)!.async('nodebuffer'));
-  }
   page.once('dialog', dialog => dialog.accept());
-  await page.goto(pathToFileURL(join(directory, 'index.html')).href);
+  await page.goto(await serveExport(page, zip, directory));
 }
 
 test('GLB clip sequence and attached sound persist and run in Play and export', async ({ page }, testInfo) => {
