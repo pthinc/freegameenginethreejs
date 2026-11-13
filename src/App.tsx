@@ -250,7 +250,10 @@ function App() {
           >
             {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
-          <h1 className="hidden sm:block text-white text-lg lg:text-xl font-bold truncate">Game Engine Editor</h1>
+          <div className="hidden sm:flex items-center gap-2 min-w-0">
+            <img src="/game-engine-logo.svg" alt="" className="h-9 w-9 shrink-0 rounded object-contain" />
+            <h1 className="text-white text-lg lg:text-xl font-bold truncate">Game Engine Editor</h1>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 lg:gap-4">

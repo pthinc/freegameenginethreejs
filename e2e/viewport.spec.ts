@@ -9,6 +9,13 @@ test('editor starts without loading individual icon modules', async ({ page }) =
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
   await expect(page.locator('canvas')).toBeVisible();
+  const logo = page.locator('header img');
+  await expect(logo).toBeVisible();
+  await expect(logo).toHaveAttribute('src', '/game-engine-logo.svg');
+  await expect.poll(() => logo.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+  const icon = page.locator('link[rel="icon"]');
+  await expect(icon).toHaveAttribute('href', '/game-engine-logo.svg');
+  expect((await page.request.get('/game-engine-logo.svg')).ok()).toBe(true);
   expect(iconRequests).toHaveLength(0);
 });
 

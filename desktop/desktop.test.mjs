@@ -25,6 +25,10 @@ test('packaged desktop saves, restores and exports a project', { timeout: 180000
   };
   let page = await launch();
   await expect(page.getByRole('button', { name: 'Projects' })).toBeVisible();
+  const logo = page.locator('header img');
+  await expect(logo).toBeVisible();
+  await expect.poll(() => logo.evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', '/game-engine-logo.svg');
   await page.getByRole('button', { name: 'Projects' }).click();
   await page.getByLabel('New project name').fill('Desktop test');
   page.once('dialog', dialog => dialog.accept());

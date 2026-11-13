@@ -1,4 +1,4 @@
-# Game Engine Editor Pre-Free ThreeJS
+# <img src="public/game-engine-logo.svg" alt="" width="48" height="48"> Game Engine Editor Pre-Free ThreeJS
 
 A browser-based editor for creating interactive 3D scenes, simple games and
 web experiences with Three.js, React and TypeScript.
