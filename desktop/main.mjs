@@ -43,6 +43,7 @@ if (!app.requestSingleInstanceLock()) {
       minWidth: 900,
       minHeight: 600,
       title: 'Game Engine Editor',
+      ...(process.platform === 'win32' ? { icon: join(root, 'desktop', 'icon.ico') } : {}),
       webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
     });
     window.removeMenu();

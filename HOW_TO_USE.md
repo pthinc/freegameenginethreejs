@@ -30,6 +30,8 @@ Kurulum dosyası ana dizine kopyalanır; sürümlü çıktısı `release` klasö
 bulunur. EXE Git'e eklenmez. Üretilen paket kod imzalı değildir; Windows
 yayıncı uyarısı gösterebilir. Kurulum dosyalarını yalnızca güvendiğiniz
 kaynaktan çalıştırın.
+Kurulum, uygulama ve kısayollar yeni logoyu kullanır. Windows eski simgeyi
+önbellekten göstermeye devam ederse Explorer'ı yenileyin veya oturumu yeniden açın.
 
 ## Linux ve macOS paketleri
 

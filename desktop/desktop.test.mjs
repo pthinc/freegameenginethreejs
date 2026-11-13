@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { _electron as electron, expect } from '@playwright/test';
 import JSZip from 'jszip';
 
@@ -25,6 +26,35 @@ test('packaged desktop saves, restores and exports a project', { timeout: 180000
   };
   let page = await launch();
   await expect(page.getByRole('button', { name: 'Projects' })).toBeVisible();
+  const icon = await readFile(resolve('desktop', 'icon.ico'));
+  const count = icon.readUInt16LE(4);
+  let icon32;
+  for (let i = 0; i < count; i++) {
+    const entry = 6 + i * 16;
+    if (icon[entry] === 32 && icon[entry + 1] === 32) {
+      icon32 = icon.subarray(icon.readUInt32LE(entry + 12), icon.readUInt32LE(entry + 12) + icon.readUInt32LE(entry + 8));
+      break;
+    }
+  }
+  assert.ok(icon32, 'Windows icon must contain a 32-pixel image');
+  for (const path of [resolve('release', 'win-unpacked', 'Game Engine Editor.exe'), resolve('Game Engine Editor Setup.exe')]) {
+    const extracted = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `
+      $ErrorActionPreference = 'Stop'
+      Add-Type -AssemblyName System.Drawing
+      $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($env:GAME_ENGINE_ICON_TEST_PATH)
+      $bitmap = $icon.ToBitmap()
+      $stream = New-Object System.IO.MemoryStream
+      $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
+      [Convert]::ToBase64String($stream.ToArray())
+      $stream.Dispose(); $bitmap.Dispose(); $icon.Dispose()
+    `], { encoding: 'utf8', env: { ...process.env, GAME_ENGINE_ICON_TEST_PATH: path } }).trim();
+    const iconsMatch = await application.evaluate(({ nativeImage }, images) => {
+      const expected = nativeImage.createFromBuffer(Buffer.from(images.expected, 'base64')).toBitmap();
+      const actual = nativeImage.createFromBuffer(Buffer.from(images.actual, 'base64')).toBitmap();
+      return actual.equals(expected);
+    }, { expected: icon32.toString('base64'), actual: extracted });
+    assert.ok(iconsMatch, `${path} must contain the new Windows icon`);
+  }
   const logo = page.locator('header img');
   await expect(logo).toBeVisible();
   await expect.poll(() => logo.evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);

@@ -88,9 +88,9 @@
       { "from": "node_modules/webgl-sdf-generator/LICENSE.txt", "to": "third-party/webgl-sdf-generator-LICENSE.txt" },
       { "from": "node_modules/bidi-js/LICENSE.txt", "to": "third-party/bidi-js-LICENSE.txt" }
     ],
-    "win": { "target": "nsis", "signAndEditExecutable": false },
+    "win": { "target": "nsis", "icon": "desktop/icon.ico", "signAndEditExecutable": true },
     "linux": { "target": ["AppImage", "deb"], "category": "Development", "maintainer": "Game Engine Editor <info@prometech.net.tr>" },
     "mac": { "target": ["dmg", "zip"], "category": "public.app-category.developer-tools" },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true }
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "installerIcon": "desktop/icon.ico", "uninstallerIcon": "desktop/icon.ico" }
   }
 }
