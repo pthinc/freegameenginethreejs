@@ -6,7 +6,7 @@ The `LICENSE` file at the root of this repository contains the legally binding l
 - License type: Proprietary / Commercial license.
 - Personal and academic research use: Permitted. Individual and academic research, experiments and note‑taking uses do not require permission.
 - Commercial use / commercialization: Written permission is required. If a Project (sales, subscriptions, OEM, white‑label, SaaS, etc.), licensing terms and royalties apply.
-- Royalty: 5% (zero point five percent) of gross sales revenue; applies to all product integrations.
+- Royalty: 0.5% (zero point five percent) of gross sales revenue; applies to all product integrations.
 - Payment period: Monthly. (Details in "Reporting & Payment".)
 - Attribution: The licensor must be credited in product/documentation/website (example: "Designed with PROMETECH A.Ş. ©").
 - Redistribution / Sublicensing: Prior written permission is required for sublicensing or redistribution.
