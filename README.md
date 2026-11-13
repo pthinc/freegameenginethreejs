@@ -3,6 +3,12 @@
 A browser-based editor for creating interactive 3D scenes, simple games and
 web experiences with Three.js, React and TypeScript.
 
+The [project website](https://pthinc.github.io/freegameenginethreejs/) is a
+static introduction; it does not run the editor or its local services. GitHub
+Pages should publish the `main` branch's `/docs` folder. The website copies of
+the logo and editor screenshot are in `docs`; update them when the originals
+in `public` and `readmeimages` change.
+
 ## Screenshots
 
 ### Scene editor
