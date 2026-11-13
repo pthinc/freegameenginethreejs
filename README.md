@@ -9,6 +9,8 @@ web experiences with Three.js, React and TypeScript.
 
 ![Editor with a 3D scene and web components](readmeimages/1.png)
 
+<img width="1475" height="946" alt="8" src="https://github.com/user-attachments/assets/58d0eb2e-72a8-4dc4-a5e4-67fd8aba7b19" />
+
 ### Project management
 
 ![Saved projects and the new project dialog](readmeimages/2.png)
