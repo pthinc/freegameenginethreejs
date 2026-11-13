@@ -39,6 +39,7 @@ web experiences with Three.js, React and TypeScript.
 - Use a review-based assistant with supported local or cloud AI providers.
 - For any missing features, you can also add your own using React + Vite.
 - It handles many functions seamlessly. It covers everything needed for basic tasks, website creation, simple games, and animated content. It has some shortcomings.
+- It saves a significant amount of time.
 
 See [FEATURES.md](FEATURES.md) for detailed behavior, limitations and setup.
 For step-by-step installation and usage in Turkish, see
