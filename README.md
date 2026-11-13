@@ -3,6 +3,28 @@
 A browser-based editor for creating interactive 3D scenes, simple games and
 web experiences with Three.js, React and TypeScript.
 
+## Screenshots
+
+### Scene editor
+
+![Editor with a 3D scene and web components](readmeimages/1.png)
+
+### Project management
+
+![Saved projects and the new project dialog](readmeimages/2.png)
+
+### Code assistant
+
+![AI provider and code assistant options](readmeimages/3.png)
+
+### Play preview and HTML export
+
+![Interactive scene running in the editor](readmeimages/4.png)
+
+![Exported HTML scene in a browser](readmeimages/5.png)
+
+![Exported scene files in a ZIP archive](readmeimages/6.png)
+
 ## Features
 
 - Create multiple scenes, import GLB models and edit objects, materials,
