@@ -1,3 +1,5 @@
+<img width="1280" height="640" alt="Three js oyun ve web motoru logosu" src="https://github.com/user-attachments/assets/8c1a66a5-e854-4154-ab48-57b89482d178" />
+
 # <img src="public/game-engine-logo.svg" alt="" width="48" height="48"> Game Engine Editor Pre-Free ThreeJS
 
 A browser-based editor for creating interactive 3D scenes, simple games and
